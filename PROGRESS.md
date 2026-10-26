@@ -90,6 +90,11 @@ Problem: dumps from MySQL 8 (`utf8mb4_0900_ai_ci`) fail on MariaDB / MySQL 5.7 /
 ### C. Export table selection (requested by Jeremy, 2026-10-26) — Phase 7
 Per-table Structure / Data (default both) without checkbox fatigue: rows grouped by WordPress plugin (Wordfence, WooCommerce, Action Scheduler, Yoast…), click-to-cycle Both → Structure only → Skip, group-level toggles, a filter whose results can be bulk-skipped / made structure-only and **remembered as per-connection rules** (e.g. "Skip wp_wf*", shown as chips, auto-applied next time), one-click "Apply suggestions" for known log/cache tables (never automatic), live size estimate. Planner splits into up to three mysqldump invocations (full / --no-data / --no-create-info) concatenated into one file; pg_dump uses --exclude-table-data.
 
+## Phase 8 — Polish and release ✅ (2026-10-26)
+8A performance/engines, 8B distribution, 8C accessibility (sections below). Final gate: all Querywell build caches wiped, `scripts/ci.sh` from scratch → PASS, 0 warnings (Core unit + Docker integration on MySQL 8.4 / MariaDB 11.4 / Postgres 16, app tests incl. contrast + accessibility). Ad-hoc-signed universal Release test build 1.0.0 (1) in `build/test-builds/`.
+
+**v1 complete.** Needs from Jeremy for a public release: Apple Team ID + Developer ID Application certificate + notarytool profile (see README "Release"), final icon art, license. Known limits: DECISIONS #21, #40, and Phase 8A "Left undone" (drivers buffer whole result sets; Postgres import can't retarget schema).
+
 ## Phase 8B - Distribution (2026-10-26)
 - App icon placeholder (`scripts/make-icon.swift` -> `AppIcon.appiconset`, all sizes); a Release build compiles the catalog with zero warnings and the bundle contains `AppIcon.icns` + `Assets.car`.
 - `scripts/release.sh`: preflight (Xcode, xcodegen, identity for the team in the keychain, notary profile), clean xcodegen, CI gate, archive, export (developer-id), signature/entitlement/nested-binary verification, notarize + staple app, signed DMG (with /Applications link), notarize + staple DMG, zip, spctl checks, SHA256SUMS. Flags: `--dry-run`, `--no-notarize`, `--skip-tests`, `--verify-only APP`. Dry run, preflight failure paths and the verifier (against an ad-hoc build) were tested; the real signing/notarization path has not been run (no Developer ID identity on the dev machine).
