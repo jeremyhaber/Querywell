@@ -65,8 +65,8 @@ public struct TableQuery: Hashable, Sendable {
         return out
     }
 
-    /// Chips AND (raw), or nil when neither contributes.
-    func whereSQL(dialect: SQLDialect) -> String? {
+    /// Chips AND (raw), or nil when neither contributes. The footer's "Show as SQL" displays this.
+    public func whereSQL(dialect: SQLDialect) -> String? {
         var parts: [String] = []
         if let chips = filter?.sql(dialect: dialect) { parts.append(chips) }
         if let raw = Self.cleanedRawWhere(rawWhere) {
