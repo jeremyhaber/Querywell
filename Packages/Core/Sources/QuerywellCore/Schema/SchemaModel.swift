@@ -118,6 +118,9 @@ public struct IndexDefinition: Hashable, Sendable, Identifiable {
 
 public struct ForeignKeyDefinition: Hashable, Sendable, Identifiable {
     public var name: String
+    /// The table that owns the constraint (the referencing side). Always set by the inspectors;
+    /// needed for `TableStructure.referencedBy`, where it is the *other* table.
+    public var table: TableRef?
     public var columns: [String]
     public var referenced: TableRef
     public var referencedColumns: [String]
@@ -128,8 +131,9 @@ public struct ForeignKeyDefinition: Hashable, Sendable, Identifiable {
     public var id: String { name }
 
     public init(name: String, columns: [String], referenced: TableRef, referencedColumns: [String],
-                onUpdate: String? = nil, onDelete: String? = nil) {
+                onUpdate: String? = nil, onDelete: String? = nil, table: TableRef? = nil) {
         self.name = name
+        self.table = table
         self.columns = columns
         self.referenced = referenced
         self.referencedColumns = referencedColumns

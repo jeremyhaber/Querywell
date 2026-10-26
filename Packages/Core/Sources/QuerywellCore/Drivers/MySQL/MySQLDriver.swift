@@ -69,6 +69,7 @@ public actor MySQLSession: DatabaseSession {
 
         do {
             let info = try await probeServer(connection, config: config, plan: plan, logger: logger)
+            try await normalizeSQLMode(connection, config: config)
             return MySQLSession(
                 connection: connection, serverInfo: info,
                 host: config.host, port: config.port, logger: logger
@@ -155,6 +156,19 @@ public actor MySQLSession: DatabaseSession {
         )
     }
 
+    /// Makes backslash escaping valid for every statement Querywell generates (DECISIONS #29):
+    /// drops `NO_BACKSLASH_ESCAPES` from the session `sql_mode`, leaving other flags intact.
+    private static func normalizeSQLMode(_ connection: MySQLConnection, config: ConnectionConfiguration) async throws {
+        let out = try await runWire(connection, "SELECT @@SESSION.sql_mode", host: config.host, port: config.port)
+        guard let cell = out.rows.first?.first, let meta = out.columns.first,
+              case .text(let mode) = MySQLValueMapping.value(cell, column: meta),
+              let adjusted = MySQLSQLMode.removingNoBackslashEscapes(from: mode)
+        else { return }
+        // The mode string only contains [A-Z_,], so the backslash-escaping literal is always valid here.
+        let literal = SQLDialect(.mysql).quoteString(adjusted)
+        _ = try await runWire(connection, "SET SESSION sql_mode = \(literal)", host: config.host, port: config.port)
+    }
+
     private static func runWire(
         _ connection: MySQLConnection, _ sql: String, host: String, port: Int
     ) async throws -> MySQLTextQueryCommand.Output {
@@ -227,5 +241,15 @@ public actor MySQLSession: DatabaseSession {
         guard !closed else { return }
         closed = true
         _ = try? await connection.close().get()
+    }
+}
+
+/// Pure `sql_mode` string handling (unit-tested).
+enum MySQLSQLMode {
+    /// The mode string without `NO_BACKSLASH_ESCAPES`, or `nil` when it was not set.
+    static func removingNoBackslashEscapes(from mode: String) -> String? {
+        let flags = mode.split(separator: ",", omittingEmptySubsequences: true).map(String.init)
+        let kept = flags.filter { $0.uppercased() != "NO_BACKSLASH_ESCAPES" }
+        return kept.count == flags.count ? nil : kept.joined(separator: ",")
     }
 }
