@@ -288,6 +288,9 @@ final class QueryTabModel {
     private func finish(_ result: QueryRunResult) async {
         lastRun = result
         isRunning = false
+        let failed = result.results.filter(\.isError).count
+        Announce.post(failed > 0 ? "Query failed. \(failed) \(failed == 1 ? "statement" : "statements") had errors."
+                      : "Query finished. \(result.results.count) \(result.results.count == 1 ? "result" : "results").", important: failed > 0)
         // The first error: highlight its statement and remember it for "Fix error".
         if let index = result.results.firstIndex(where: \.isError), case .error(let e) = result.results[index].outcome {
             let r = result.results[index]
@@ -483,6 +486,7 @@ final class QueryTabModel {
     func show(toast message: String, isError: Bool) {
         let t = ModelToast(message: message, isError: isError)
         toast = t
+        Announce.post(message, important: isError)
         toastTask?.cancel()
         toastTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(isError ? 5 : 3))

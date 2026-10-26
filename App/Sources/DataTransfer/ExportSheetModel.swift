@@ -102,7 +102,17 @@ final class ExportSheetModel {
     var destination: URL
     @ObservationIgnored private var destinationChosen = false
 
-    private(set) var runState: RunState = .idle
+    private(set) var runState: RunState = .idle {
+        didSet {
+            switch runState {
+            case .running where oldValue != .running: Announce.post("Export started.")
+            case .finished(let summary): Announce.post("Export finished. \(summary.tables.count) tables written.")
+            case .failed(let failure): Announce.post("Export failed. \(failure.message)", important: true)
+            case .cancelled: Announce.post("Export cancelled.")
+            default: break
+            }
+        }
+    }
     private(set) var progress = Progress()
     private(set) var startedAt: Date?
     private(set) var finishedAt: Date?

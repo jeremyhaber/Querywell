@@ -89,7 +89,17 @@ final class ResultExportModel {
     var rowsPerStatement = 100
     private let schema: String
 
-    private(set) var state: State = .idle
+    private(set) var state: State = .idle {
+        didSet {
+            switch state {
+            case .finished(_, let rows, _): Announce.post("Export finished. \(rows) rows written.")
+            case .failed(let message): Announce.post("Export failed. \(message)", important: true)
+            case .cancelled: Announce.post("Export cancelled.")
+            case .running where oldValue == .idle: Announce.post("Exporting.")
+            default: break
+            }
+        }
+    }
 
     init(source: Source, name: String, engine: DatabaseEngine, schema: String, tableName: String) {
         self.source = source

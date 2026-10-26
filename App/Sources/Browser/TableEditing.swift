@@ -486,6 +486,7 @@ extension TableDataModel {
     func show(toast message: String, isError: Bool) {
         let t = ModelToast(message: message, isError: isError)
         toast = t
+        Announce.post(message, important: isError)
         toastTask?.cancel()
         toastTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(isError ? 6 : 3.5))

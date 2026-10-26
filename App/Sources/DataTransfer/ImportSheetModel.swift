@@ -69,7 +69,16 @@ final class ImportSheetModel {
     // MARK: State
 
     private(set) var scan: ScanState = .scanning
-    private(set) var phase: Phase = .setup
+    private(set) var phase: Phase = .setup {
+        didSet {
+            switch phase {
+            case .running where oldValue != .running: Announce.post("Import started.")
+            case .finished: Announce.post("Import finished.")
+            case .failed(let message): Announce.post("Import failed. \(message)", important: true)
+            default: break
+            }
+        }
+    }
     private(set) var progress: ImportProgress?
     private(set) var errors: [ImportStatementError] = []
     private(set) var errorCount = 0

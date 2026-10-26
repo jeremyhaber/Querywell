@@ -55,7 +55,12 @@ final class BatchOperationsModel {
     private(set) var skipReasons: [TableRef: String] = [:]
     private(set) var planError: String?
     private(set) var statuses: [Int: StepStatus] = [:]
-    private(set) var runState: RunState = .idle
+    private(set) var runState: RunState = .idle {
+        didSet {
+            if case .finished = runState { Announce.post("Batch operation finished.") }
+            else if runState == .running, oldValue != .running { Announce.post("Batch operation started.") }
+        }
+    }
     private(set) var authorizationDeclined = false
 
     @ObservationIgnored private let inspector: (any SchemaInspector)?

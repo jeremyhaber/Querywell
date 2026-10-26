@@ -104,7 +104,16 @@ final class SearchReplaceModel {
     private(set) var wordPressInstalls: [WordPressInfo] = []
 
     // Run state.
-    private(set) var stage: Stage = .configuring
+    private(set) var stage: Stage = .configuring {
+        didSet {
+            switch stage {
+            case .running(let mode) where oldValue != stage: Announce.post(mode == .apply ? "Replacing." : "Searching.")
+            case .previewed where oldValue != stage: Announce.post("Preview ready.")
+            case .applied where oldValue != stage: Announce.post("Replace finished.")
+            default: break
+            }
+        }
+    }
     private(set) var inputError: String?
     private(set) var progress: [TableRef: Progress] = [:]
     private(set) var currentTable: TableRef?
