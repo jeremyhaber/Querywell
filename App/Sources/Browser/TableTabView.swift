@@ -430,12 +430,15 @@ struct FooterButton: View {
     var body: some View {
         Button(action: action) {
             Group {
-                if let title { Text(title) } else if let systemImage { Image(systemName: systemImage).font(.system(size: 9)) }
+                if let title {
+                    Text(title).padding(.horizontal, 10).padding(.vertical, 4)
+                } else if let systemImage {
+                    // Fixed square so plus, minus and duplicate match whatever the symbol's own width is.
+                    Image(systemName: systemImage).font(.system(size: 9)).frame(width: 26, height: 22)
+                }
             }
             .font(.system(size: 12))
             .foregroundStyle(Theme.text)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
             .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.smallRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.smallRadius).strokeBorder(Theme.separator))
             .opacity(isEnabled ? 1 : 0.45)

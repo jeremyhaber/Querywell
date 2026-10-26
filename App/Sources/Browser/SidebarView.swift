@@ -161,7 +161,8 @@ struct WorkspaceSidebar: View {
             let shift = flags.contains(.shift)
             browser.select(name, command: command, shift: shift, visible: visible)
             listFocused = true
-            if !command && !shift { open(name) }
+            // Command-click also extends the selection (batch operations), and always opens a new tab.
+            if command { open(name, newTab: true) } else if !shift { open(name) }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: isView ? "eye" : "tablecells")
@@ -189,6 +190,8 @@ struct WorkspaceSidebar: View {
         }
         .buttonStyle(.plain)
         .id(name)
+        // Double-click keeps the preview tab the first click opened.
+        .simultaneousGesture(TapGesture(count: 2).onEnded { workspace.keepSelectedTab() })
         .contextMenu { contextMenu(for: info) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel(for: info))
@@ -214,7 +217,7 @@ struct WorkspaceSidebar: View {
         let readOnly = workspace.profile.effectiveReadOnly
         let realTables = targets.filter { $0.kind == .table }
         let unsupported = BatchOperationsModel.unsupportedReason(for: workspace.profile.engine)
-        Button("Open in New Tab") { open(name) }
+        Button("Open in New Tab") { open(name, newTab: true) }
         Button("Show Structure") {
             open(name)
             workspace.tableModel(forTable: info.ref)?.mode = .structure
@@ -268,9 +271,9 @@ struct WorkspaceSidebar: View {
         }
     }
 
-    private func open(_ name: String) {
+    private func open(_ name: String, newTab: Bool = false) {
         guard let schema = browser.selectedSchema else { return }
-        workspace.openTable(TableRef(schema: schema, name: name))
+        workspace.openTable(TableRef(schema: schema, name: name), newTab: newTab)
     }
 
     private func move(_ delta: Int, visible: [String], proxy: ScrollViewProxy) {
