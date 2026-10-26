@@ -135,6 +135,12 @@ struct AppCommands: Commands {
                 .disabled(actions == nil)
         }
 
+        CommandMenu("Database") {
+            Button("Search & Replace…") { actions?.searchReplace?() }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .disabled(actions?.searchReplace == nil)
+        }
+
         CommandMenu("Tab") {
             Button("New Query") { actions?.newQuery?() }
                 .keyboardShortcut("t")

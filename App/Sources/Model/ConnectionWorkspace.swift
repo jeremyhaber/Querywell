@@ -37,6 +37,9 @@ final class ConnectionWorkspace: Identifiable {
     var batchOperations: BatchOperationsModel?
     /// Console, terminal, export and import state (Phase 7).
     let tools = WorkspaceTools()
+    /// Database ▸ Search & Replace… (kept between openings so the last search/replace pair is still there).
+    var searchReplace: SearchReplaceModel?
+    var searchReplacePresented = false
 
     @ObservationIgnored private(set) var live: LiveConnection?
     @ObservationIgnored weak var window: NSWindow?

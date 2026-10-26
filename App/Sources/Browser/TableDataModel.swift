@@ -166,6 +166,8 @@ final class TableDataModel {
     // Selection / inspector.
     private(set) var selectedRows: [Int] = []
     var inspectorVisible = false
+    /// The value editor sheet (JSON / PHP serialized / text) opened on a cell of this table.
+    var valueEditor: ValueEditorModel?
     var inspectorFocusColumn: String?
     /// Last clicked column, the target of ⌘⌥F.
     var activeColumn: String?

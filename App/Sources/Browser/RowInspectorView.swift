@@ -31,6 +31,8 @@ struct RowInspectorView: View {
     var nullDisplay: String
     var onClose: () -> Void
     var editing: InspectorEditing?
+    /// Opens the value editor for a column of the selected row ("Open in editor").
+    var onOpenEditor: ((String) -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -61,7 +63,7 @@ struct RowInspectorView: View {
                                 InspectorField(
                                     column: column, value: values[index], nullDisplay: nullDisplay,
                                     isFocused: focusColumn?.caseInsensitiveCompare(column.name) == .orderedSame,
-                                    editing: editing)
+                                    editing: editing, onOpenEditor: onOpenEditor)
                                     .id(column.name)
                             }
                             if let editing, editing.pendingCount > 0 { pendingSection(editing) }
@@ -138,6 +140,7 @@ struct InspectorField: View {
     var nullDisplay: String
     var isFocused: Bool
     var editing: InspectorEditing?
+    var onOpenEditor: ((String) -> Void)?
 
     @State private var draft = ""
     @State private var error: String?
@@ -152,6 +155,12 @@ struct InspectorField: View {
     private var isMultiline: Bool {
         guard case .text(let s) = value else { return column.presentation.kind == .json || column.presentation.kind == .longText }
         return s.contains("\n") || s.count > 60 || column.presentation.kind == .json || column.presentation.kind == .longText
+    }
+
+    /// Text, JSON and binary values open in the value editor (not NULLs).
+    private var offersEditor: Bool {
+        guard !value.isNull else { return false }
+        return isStructured || isMultiline || TableDataModel.supportsValueEditor(column.presentation.kind) && column.presentation.kind != .other
     }
 
     private var isStructured: Bool {
@@ -178,9 +187,11 @@ struct InspectorField: View {
                             .controlSize(.mini).help("Set \(column.name) to NULL")
                     }
                 }
-                if isStructured {
-                    // Phase 6 brings the JSON / serialized-PHP editor.
-                    Button("Open in editor") {}.controlSize(.mini).disabled(true).help("Phase 6")
+                if let onOpenEditor, offersEditor {
+                    Button("Open in editor") { onOpenEditor(column.name) }
+                        .controlSize(.mini)
+                        .help(canEdit ? "Edit this value as JSON, PHP serialized data or text" : "View this value as JSON, PHP serialized data or text")
+                        .accessibilityLabel("Open \(column.name) in the value editor")
                 }
             }
             if canEdit, let info { editor(info) } else { box }

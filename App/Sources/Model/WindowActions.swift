@@ -20,6 +20,8 @@ struct WindowActions {
     /// File ▸ Import SQL… (⇧⌘I); `nil` when not connected or read-only.
     var importSQL: (() -> Void)?
     var quickOpen: () -> Void
+    /// Database ▸ Search & Replace… (⇧⌘H); nil while disconnected.
+    var searchReplace: (() -> Void)?
 }
 
 private struct WindowActionsKey: FocusedValueKey {

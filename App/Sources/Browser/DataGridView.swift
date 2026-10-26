@@ -13,6 +13,8 @@ struct GridActions {
     var onFilterRequestConsumed: () -> Void = {}
     var onFunnel: (String) -> Void = { _ in }
     var onReturn: () -> Void = {}
+    /// "Edit Value…" / double-click on long text: opens the value editor for (row, column).
+    var onEditValue: (Int, String) -> Void = { _, _ in }
     /// Editing hooks; nil while the table has not loaded.
     var editing: GridEditing?
     var onEditRequestConsumed: () -> Void = {}
@@ -532,6 +534,10 @@ final class GridCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegat
             if content.columns[index].foreignKey != nil, !content.rows[row][index].isNull {
                 menu.addItem(item("Open Referenced Row ↗", #selector(menuFollow(_:)), represented: CellCoordinate(row: row, column: columnName)))
             }
+            if TableDataModel.supportsValueEditor(content.columns[index].presentation.kind) {
+                let canEdit = parent?.actions.editing?.info(row, columnName).canEdit == true
+                menu.addItem(item(canEdit ? "Edit Value…" : "View Value…", #selector(menuEditValue(_:)), represented: CellCoordinate(row: row, column: columnName)))
+            }
         }
         addEditingItems(to: menu, row: row, columnName: columnName)
         menu.addItem(.separator())
@@ -705,7 +711,7 @@ extension GridCoordinator: NSTextFieldDelegate {
         table.scrollColumnToVisible(tableIndex)
 
         if info.prefersInspector {
-            parent?.actions.onInspect(row, columnID)
+            parent?.actions.onEditValue(row, columnID)
             return
         }
         let frame = table.frameOfCell(atColumn: tableIndex, row: row)
@@ -932,6 +938,10 @@ extension GridCoordinator: NSTextFieldDelegate {
         }
     }
 
+    @objc private func menuEditValue(_ sender: NSMenuItem) {
+        guard let c = sender.representedObject as? CellCoordinate else { return }
+        parent?.actions.onEditValue(c.row, c.column)
+    }
     @objc private func menuEditCell(_ sender: NSMenuItem) {
         guard let c = sender.representedObject as? CellCoordinate else { return }
         beginEdit(row: c.row, columnID: c.column)
