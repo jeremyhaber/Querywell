@@ -332,6 +332,106 @@ public struct PostgresSchemaInspector: SchemaInspector {
 
     public func availableCollations() async throws -> [CollationInfo] { [] }
     public func availableEngines() async throws -> [String] { [] }
+
+    // MARK: Table options and triggers
+
+    public func tableOptions(of table: TableRef) async throws -> TableOptions {
+        let oid = relOID(table)
+        let info = try await session.execute(
+            """
+            SELECT obj_description(c.oid, 'pg_class')::text AS qw_comment, ts.spcname::text AS qw_space \
+            FROM pg_class c LEFT JOIN pg_tablespace ts ON ts.oid = c.reltablespace AND c.reltablespace <> 0 \
+            WHERE c.oid = \(oid)
+            """
+        )
+        guard let r = info.records.first else {
+            throw DatabaseError.query(message: "relation \"\(table.schema).\(table.name)\" does not exist", code: "42P01")
+        }
+        // The first identity / serial column's sequence, and where it will continue.
+        let seqResult = try await session.execute(
+            """
+            SELECT sn.nspname::text AS qw_schema, s.relname::text AS qw_name FROM pg_depend d \
+            JOIN pg_class s ON s.oid = d.objid AND s.relkind = 'S' JOIN pg_namespace sn ON sn.oid = s.relnamespace \
+            WHERE d.refobjid = \(oid) AND d.deptype IN ('a', 'i') AND d.classid = 'pg_class'::regclass \
+            AND d.refclassid = 'pg_class'::regclass ORDER BY d.refobjsubid LIMIT 1
+            """
+        )
+        var sequence: TableRef?
+        var next: Int64?
+        if let s = seqResult.records.first, let schema = s.string("qw_schema"), let name = s.string("qw_name") {
+            let ref = TableRef(schema: schema, name: name)
+            sequence = ref
+            if let state = try? await session.execute("SELECT last_value::int8 AS qw_last, is_called AS qw_called FROM \(dialect.qualified(ref))"),
+               let row = state.records.first, let last = row.int("qw_last") {
+                next = (row.bool("qw_called") ?? true) ? last + 1 : last
+            }
+        }
+        return TableOptions(
+            comment: r.string("qw_comment") ?? "", autoIncrement: next, sequence: sequence, tablespace: r.string("qw_space"))
+    }
+
+    /// `tgtype` bit field → timing, events, row / statement level.
+    static func decodeTriggerType(_ type: Int) -> (timing: TriggerTiming, events: [TriggerEvent], forEachRow: Bool) {
+        var events: [TriggerEvent] = []
+        if type & 4 != 0 { events.append(.insert) }
+        if type & 16 != 0 { events.append(.update) }
+        if type & 8 != 0 { events.append(.delete) }
+        if type & 32 != 0 { events.append(.truncate) }
+        let timing: TriggerTiming = type & 64 != 0 ? .insteadOf : (type & 2 != 0 ? .before : .after)
+        return (timing, events, type & 1 != 0)
+    }
+
+    public func triggers(on table: TableRef) async throws -> [TriggerInfo] {
+        let result = try await session.execute(
+            """
+            SELECT t.tgname::text AS qw_name, t.tgtype::int4 AS qw_type, t.tgenabled::text AS qw_enabled, \
+            fn.nspname::text AS qw_fn_schema, p.proname::text AS qw_fn_name, \
+            pg_get_expr(t.tgqual, t.tgrelid)::text AS qw_when \
+            FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid JOIN pg_namespace fn ON fn.oid = p.pronamespace \
+            WHERE t.tgrelid = \(relOID(table)) AND NOT t.tgisinternal ORDER BY t.tgname
+            """
+        )
+        return result.records.compactMap { r in
+            guard let name = r.string("qw_name"), let type = r.int("qw_type") else { return nil }
+            let decoded = Self.decodeTriggerType(Int(type))
+            let function = TableRef(schema: r.string("qw_fn_schema") ?? "", name: r.string("qw_fn_name") ?? "")
+            return TriggerInfo(
+                name: name, table: table, timing: decoded.timing, events: decoded.events, forEachRow: decoded.forEachRow,
+                statement: "EXECUTE FUNCTION \(dialect.qualified(function))()", function: function,
+                whenCondition: r.string("qw_when")?.nilIfEmpty, isEnabled: r.string("qw_enabled") != "D")
+        }
+    }
+
+    public func triggerDefinition(_ trigger: TriggerInfo) async throws -> String {
+        let result = try await session.execute(
+            """
+            SELECT pg_get_triggerdef(t.oid, true)::text AS qw_def FROM pg_trigger t \
+            WHERE t.tgrelid = \(relOID(trigger.table)) AND t.tgname = \(lit(trigger.name)) AND NOT t.tgisinternal
+            """
+        )
+        return result.records.first?.string("qw_def") ?? ""
+    }
+
+    public func triggerFunctions(schema: String) async throws -> [TableRef] {
+        let result = try await session.execute(
+            """
+            SELECT p.proname::text AS qw_name FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+            WHERE n.nspname = \(lit(schema)) AND p.prorettype = 'trigger'::regtype AND p.pronargs = 0 AND p.prokind = 'f' \
+            ORDER BY p.proname
+            """
+        )
+        return result.records.compactMap { $0.string("qw_name").map { TableRef(schema: schema, name: $0) } }
+    }
+
+    public func functionDefinition(_ function: TableRef) async throws -> String? {
+        let result = try await session.execute(
+            """
+            SELECT pg_get_functiondef(p.oid)::text AS qw_def FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+            WHERE n.nspname = \(lit(function.schema)) AND p.proname = \(lit(function.name)) AND p.pronargs = 0 AND p.prokind = 'f' LIMIT 1
+            """
+        )
+        return result.records.first?.string("qw_def")
+    }
 }
 
 /// Picks the inspector for an open session's engine.

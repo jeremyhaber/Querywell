@@ -542,6 +542,15 @@ final class ConnectionWorkspace: Identifiable {
         tabs.tabs.first { $0.kind == .table(database: ref.schema, name: ref.name) }.flatMap { tableModel(forTab: $0) }
     }
 
+    /// A table was renamed or moved: its open tab now shows `new`, and the sidebar re-reads.
+    func tableRelocated(from old: TableRef, to new: TableRef) {
+        for tab in tabs.tabs where tab.kind == .table(database: old.schema, name: old.name) {
+            tabs.retargetTable(id: tab.id, database: new.schema, name: new.name)
+            tableModels[tab.id]?.retarget(to: new)
+        }
+        refreshSchema()
+    }
+
     /// ⌘R: re-read schemas and tables, and the structure of open tables.
     func refreshSchema() {
         browser.refresh()

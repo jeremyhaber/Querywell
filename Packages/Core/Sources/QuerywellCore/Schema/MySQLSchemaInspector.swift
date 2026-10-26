@@ -329,4 +329,71 @@ public struct MySQLSchemaInspector: SchemaInspector {
             return engine
         }
     }
+
+    // MARK: Table options and triggers
+
+    public func tableOptions(of table: TableRef) async throws -> TableOptions {
+        let result = try await session.execute(
+            """
+            SELECT ENGINE AS qw_engine, TABLE_COLLATION AS qw_collation, TABLE_COMMENT AS qw_comment, \
+            AUTO_INCREMENT AS qw_auto, ROW_FORMAT AS qw_format, TABLE_TYPE AS qw_type \
+            FROM information_schema.TABLES WHERE TABLE_SCHEMA = \(lit(table.schema)) AND TABLE_NAME = \(lit(table.name))
+            """
+        )
+        guard let r = result.records.first else {
+            throw DatabaseError.query(message: "Table \(table) doesn't exist.", code: "1146")
+        }
+        // MySQL 8 serves information_schema.TABLES.AUTO_INCREMENT from a cache (up to 24 h stale);
+        // SHOW CREATE TABLE is always current.
+        var auto = r.int("qw_auto")
+        if let create = try? await session.execute("SHOW CREATE TABLE \(dialect.qualified(table))"),
+           let text = create.rows.first.flatMap({ $0.count > 1 ? Record.string(from: $0[1]) : nil }) {
+            auto = Self.parseAutoIncrement(createStatement: text) ?? auto
+        }
+        let isView = (r.string("qw_type") ?? "").uppercased().contains("VIEW")
+        return TableOptions(
+            engine: isView ? nil : r.string("qw_engine"), collation: r.string("qw_collation"),
+            comment: isView ? "" : (r.string("qw_comment") ?? ""), autoIncrement: auto, rowFormat: r.string("qw_format"))
+    }
+
+    /// The `AUTO_INCREMENT=n` table option of a `SHOW CREATE TABLE` text (nil when there is none).
+    static func parseAutoIncrement(createStatement: String) -> Int64? {
+        guard let close = createStatement.lastIndex(of: ")") else { return nil }
+        var tail = String(createStatement[close...])
+        if let comment = tail.range(of: "COMMENT='") { tail = String(tail[..<comment.lowerBound]) }  // never read inside the comment
+        guard let range = tail.range(of: "AUTO_INCREMENT=") else { return nil }
+        let digits = tail[range.upperBound...].prefix { $0.isNumber }
+        return Int64(digits)
+    }
+
+    public func triggers(on table: TableRef) async throws -> [TriggerInfo] {
+        let result = try await session.execute(
+            """
+            SELECT TRIGGER_NAME AS qw_name, ACTION_TIMING AS qw_timing, EVENT_MANIPULATION AS qw_event, \
+            ACTION_STATEMENT AS qw_stmt, ACTION_ORIENTATION AS qw_orient, DEFINER AS qw_definer \
+            FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = \(lit(table.schema)) \
+            AND EVENT_OBJECT_TABLE = \(lit(table.name)) ORDER BY ACTION_TIMING, EVENT_MANIPULATION, ACTION_ORDER, TRIGGER_NAME
+            """
+        )
+        return result.records.compactMap { r in
+            guard let name = r.string("qw_name"),
+                  let timing = TriggerTiming(rawValue: (r.string("qw_timing") ?? "").uppercased()),
+                  let event = TriggerEvent(rawValue: (r.string("qw_event") ?? "").uppercased())
+            else { return nil }
+            return TriggerInfo(
+                name: name, table: table, timing: timing, events: [event], forEachRow: true,
+                statement: r.string("qw_stmt") ?? "", definer: r.string("qw_definer")?.nilIfEmpty)
+        }
+    }
+
+    public func triggerDefinition(_ trigger: TriggerInfo) async throws -> String {
+        let result = try await session.execute(
+            "SHOW CREATE TRIGGER \(dialect.qualified(TableRef(schema: trigger.table.schema, name: trigger.name)))")
+        // Columns: Trigger, sql_mode, SQL Original Statement, …
+        if let r = result.records.first, let text = r.string("SQL Original Statement") { return text }
+        return result.rows.first.flatMap { $0.count > 2 ? Record.string(from: $0[2]) : nil } ?? ""
+    }
+
+    public func triggerFunctions(schema: String) async throws -> [TableRef] { [] }
+    public func functionDefinition(_ function: TableRef) async throws -> String? { nil }
 }

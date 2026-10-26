@@ -202,6 +202,13 @@ public struct WorkspaceTabs: Hashable, Sendable, Codable {
         if let i = tabs.firstIndex(where: { $0.id == id }) { tabs[i].title = title }
     }
 
+    /// Points a table tab at another table (after a rename or move); the title follows the new name.
+    public mutating func retargetTable(id: WorkspaceTab.ID, database: String, name: String) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }), case .table = tabs[i].kind else { return }
+        tabs[i].kind = .table(database: database, name: name)
+        tabs[i].title = name
+    }
+
     /// Links (or unlinks) a query tab to a saved query; a linked tab takes the saved query's name.
     public mutating func link(id: WorkspaceTab.ID, savedQueryID: UUID?, title: String? = nil) {
         guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }

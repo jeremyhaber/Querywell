@@ -20,6 +20,8 @@ struct TableTabView: View {
             case .indexes: IndexesTableView(model: model)
             case .relations:
                 RelationsView(model: model) { workspace.openTable($0) }
+            case .operations: TableOperationsView(model: model, workspace: workspace)
+            case .triggers: TableTriggersView(model: model, workspace: workspace)
             }
             if model.mode != .data { simpleFooter }
         }
