@@ -176,6 +176,8 @@ private struct Analysis {
         "REFRESH", "NOTIFY", "INSTALL", "UNINSTALL", "CHECK", "SHUTDOWN", "PURGE", "CHANGE", "STOP", "BINLOG",
         "SIGNAL", "RESIGNAL", "HANDLER", "CACHE", "RESTART",
     ]
+    /// Writes whose effect isn't visible in the statement text.
+    private static let opaqueWriteVerbs: Set<String> = ["CALL", "DO", "EXECUTE"]
     private static let ddlVerbs: Set<String> = [
         "CREATE", "ALTER", "DROP", "TRUNCATE", "RENAME", "GRANT", "REVOKE", "SECURITY",
     ]
@@ -321,7 +323,13 @@ private struct Analysis {
         }
 
         if Self.sessionVerbs.contains(verb) { r.kind = .session; return r }
-        if Self.writeVerbs.contains(verb) { r.kind = .write; return r }
+        if Self.writeVerbs.contains(verb) {
+            r.kind = .write
+            // Procedures and dynamic SQL can do anything (DELETE, DROP…) and can't be dry-run, so
+            // treat them as destructive: on PROD that means typing the database name.
+            r.destructive = Self.opaqueWriteVerbs.contains(verb)
+            return r
+        }
         if Self.readVerbs.contains(verb) { r.kind = .read; return r }
         return unknownResult(verb)
     }

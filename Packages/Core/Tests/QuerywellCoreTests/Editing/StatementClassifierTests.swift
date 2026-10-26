@@ -184,7 +184,9 @@ struct StatementClassifierTests {
         #expect(!d("INSERT INTO t VALUES (1) ON DUPLICATE KEY UPDATE a = 2"))
         #expect(!d("ALTER TABLE t ADD COLUMN c int"))
         #expect(!d("CREATE TABLE t (a int)"))
-        #expect(!d("CALL p()"))
+        // Opaque writes: effect not visible, can't be dry-run → destructive (typed name on PROD).
+        #expect(d("CALL p()"))
+        #expect(d("EXECUTE stmt"))
         #expect(!d("GRANT SELECT ON t TO u"))
     }
 
