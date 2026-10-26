@@ -61,6 +61,7 @@ struct SnapshotTests {
 
     private func render<V: View>(
         _ view: V, model: AppModel, size: CGSize, name: String,
+        composeChildren: Bool = false,
         prepare: ((NSWindow) async throws -> Void)? = nil,
         extra: ((NSWindow, String) async throws -> Void)? = nil
     ) async throws {
@@ -84,7 +85,10 @@ struct SnapshotTests {
             }
             // Real window-server output: cacheDisplay doesn't draw macOS 26 toolbar glass correctly
             // (it produced phantom shapes). Capturing our own window needs no Screen Recording permission.
-            let image = try #require(Self.captureWindow(window.windowNumber))
+            var image = try #require(Self.captureWindow(window.windowNumber))
+            if composeChildren, let children = window.childWindows, !children.isEmpty {
+                image = Self.composite(image, frame: window.frame, children: children) ?? image
+            }
             let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
             try png.write(to: outputDirectory.appendingPathComponent("\(name)-\(suffix).png"))
             try await extra?(window, suffix)
@@ -198,6 +202,22 @@ struct SnapshotTests {
         let imageOptionBoundsIgnoreFraming: UInt32 = 1 << 0
         return capture(.null, optionIncludingWindow, UInt32(windowNumber), imageOptionBoundsIgnoreFraming)?
             .takeRetainedValue()
+    }
+
+    /// Draws child windows (autocomplete popup) onto the window capture at their on-screen positions.
+    private static func composite(_ base: CGImage, frame: NSRect, children: [NSWindow]) -> CGImage? {
+        let scale = CGFloat(base.width) / frame.width
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
+        for child in children where child.isVisible {
+            guard let image = captureWindow(child.windowNumber) else { continue }
+            let f = child.frame
+            ctx.draw(image, in: CGRect(x: (f.minX - frame.minX) * scale, y: (f.minY - frame.minY) * scale,
+                                       width: CGFloat(image.width), height: CGFloat(image.height)))
+        }
+        return ctx.makeImage()
     }
 
     /// Hosts `view` in a window of `width` and reports whether the toolbar shows its overflow button.
@@ -457,6 +477,165 @@ struct SnapshotTests {
         batch.operation = .convert
         try await renderSheet(BatchOperationsSheet(model: batch) {}, model: model, size: CGSize(width: 740, height: 680), name: "batch-convert")
         #expect(batch.plan?.statements.contains { $0.contains("qw_legacy_utf8") } == true)
+
+        await model.closeWorkspace(id: workspaceID)
+    }
+
+    // MARK: Query editor
+
+    @Test func queryEditorScreensAgainstDocker() async throws {
+        let (model, dir) = try await makeModel()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = try await seed(model)
+        let workspaceID = try #require(await model.connect(profileID: id))
+        let workspace = try #require(model.workspaces[workspaceID])
+        await workspace.connect()
+        let session = try #require(workspace.live?.session)
+        try await createWordPressFixture(session)
+        workspace.refreshSchema()
+        try await waitUntil { workspace.browser.current?.tables.contains { $0.ref.name == "wp_posts" } == true }
+        let schema = "querywell_test"
+        let size = CGSize(width: 1200, height: 760)
+
+        // History from "earlier": written before the run so the new statements are newest.
+        let history = model.queryServices.history(for: id)
+        let day: TimeInterval = 86_400
+        for entry in [
+            HistoryEntry(sql: "SELECT option_name, LENGTH(option_value) FROM wp_options ORDER BY 2 DESC", ranAt: Date().addingTimeInterval(-day * 3), rowCount: 50),
+            HistoryEntry(sql: "DELETE FROM wp_options WHERE option_name LIKE '_transient_%'", ranAt: Date().addingTimeInterval(-day * 1.1), affected: 412),
+            HistoryEntry(sql: "SELECT * FROM wp_users", ranAt: Date().addingTimeInterval(-day * 1.05), rowCount: 18),
+            HistoryEntry(sql: "SHOW PROCESSLIST", ranAt: Date().addingTimeInterval(-3_600), rowCount: 6),
+            HistoryEntry(sql: "SELECT post_titel FROM wp_posts", ranAt: Date().addingTimeInterval(-1_800), error: "Unknown column 'post_titel' in 'field list'"),
+            HistoryEntry(sql: "UPDATE wp_options SET option_value = 'x' WHERE option_name = 'blogname'", ranAt: Date().addingTimeInterval(-900), affected: 1),
+        ] { try await history.record(entry) }
+        _ = try await model.queryServices.savedQueries.save(
+            name: "Pages edited this month", sql: "SELECT p.ID, p.post_title FROM wp_posts p WHERE p.post_type = 'page'", connectionID: id,
+            notes: "With author", tags: ["wp", "content"])
+        _ = try await model.queryServices.savedQueries.save(
+            name: "Autoloaded options by size", sql: "SELECT option_name, LENGTH(option_value) AS bytes FROM wp_options WHERE autoload = 'yes' ORDER BY bytes DESC LIMIT 20",
+            connectionID: nil, tags: ["perf"])
+        _ = try await model.queryServices.snippets.add(name: "Drafts by author", sql: "SELECT * FROM ${1:wp_posts} WHERE post_status = 'draft' AND post_author = ${2:1}$0", tags: ["wp"])
+
+        // --- Two-statement script: results, messages, editable hint. ---
+        let script = """
+        -- Pages edited this month, with author
+        SELECT p.ID, p.post_title, p.post_modified, u.display_name
+        FROM wp_posts p
+        JOIN wp_users u ON u.ID = p.post_author
+        WHERE p.post_type = 'page'
+          AND p.post_modified >= NOW() - INTERVAL 30 DAY
+        ORDER BY p.post_modified DESC;
+
+        SELECT COUNT(*) FROM wp_posts WHERE post_status = 'draft';
+        """
+        workspace.tabs.newQuery()
+        let q = try #require(workspace.currentQueryModel)
+        q.text = script
+        q.selection = NSRange(location: (script as NSString).length, length: 0)
+        await q.run(.all)
+        #expect(q.results.count == 2)
+        #expect(q.results[0].title.hasPrefix("Result 1 · "))
+        #expect(q.results[1].title == "Result 2 · 1 row")
+        #expect(q.guardHint == .none || q.guardHint == .readOnlyQuery)
+        try await waitUntil { q.results.allSatisfy { $0.verdict != nil } }
+        #expect(q.results[0].verdict?.reason == "Joins two tables")
+        workspace.queryLibrary.segment = .history
+        await workspace.queryLibrary.reload()
+        #expect(workspace.queryLibrary.history.count >= 8)
+
+        q.selected = .result(q.results[0].id)
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-results")
+        q.selected = .result(q.results[1].id)
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-result2")
+        q.selected = .messages
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-messages")
+
+        // --- An editable single-table result. ---
+        workspace.tabs.newQuery()
+        let e = try #require(workspace.currentQueryModel)
+        e.text = "SELECT ID, user_login, display_name FROM wp_users ORDER BY ID"
+        await e.run(.all)
+        try await waitUntil { e.results.first?.editModel?.content != nil && e.results.first?.editModel?.isLoading == false }
+        #expect(e.results.first?.verdict?.info?.table == TableRef(schema: schema, name: "wp_users"))
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-editable")
+        workspace.tabs.close(id: try #require(workspace.tabs.selectedID))
+        workspace.tabs.select(id: try #require(workspace.tabs.tabs.first { $0.id == workspace.tabs.tabs[0].id }?.id))
+
+        // --- Sidebar segments. ---
+        workspace.queryLibrary.segment = .saved
+        await workspace.queryLibrary.reload()
+        #expect(workspace.queryLibrary.saved.count == 2)
+        q.selected = .result(q.results[0].id)
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-saved")
+        workspace.queryLibrary.segment = .snippets
+        await workspace.queryLibrary.reload()
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-snippets")
+        workspace.queryLibrary.segment = .history
+
+        // --- Explain. ---
+        q.selection = NSRange(location: 60, length: 0)
+        await q.explain()
+        guard case .done(let outcome) = q.explainState else { Issue.record("explain failed: \(q.explainState)"); return }
+        #expect(outcome.plan.root.flattened.contains { $0.table != nil })
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-explain")
+
+        // --- Error highlight (squiggle + messages). ---
+        workspace.tabs.newQuery()
+        let bad = try #require(workspace.currentQueryModel)
+        bad.text = "SELECT ID, post_titel\nFROM wp_posts\nWHERE post_status = 'draft'"
+        await bad.run(.all)
+        #expect(bad.lastError?.message.contains("post_titel") == true)
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-error", prepare: { window in
+            if let tv = Self.findView(SQLEditorTextView.self, in: window.contentView!) { tv.setDiagnostics(bad.editor.textView == nil ? [] : [EditorDiagnostic(range: NSRange(location: 0, length: (bad.text as NSString).length), message: bad.lastError?.message ?? "")]) }
+        })
+
+        // --- Autocomplete after `wp_posts p WHERE p.`. ---
+        workspace.tabs.newQuery()
+        let c = try #require(workspace.currentQueryModel)
+        c.text = "SELECT *\nFROM wp_posts p\nWHERE p."
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-autocomplete", composeChildren: true, prepare: { window in
+            window.makeKeyAndOrderFront(nil)
+            guard let tv = Self.findView(SQLEditorTextView.self, in: window.contentView!) else { return }
+            window.makeFirstResponder(tv)
+            tv.setSelectedRange(NSRange(location: (c.text as NSString).length, length: 0))
+            tv.requestCompletion(force: true)
+            try await Task.sleep(for: .seconds(1.5))
+        })
+        c.editor.textView?.hideCompletion()
+        workspace.tabs.close(id: try #require(workspace.tabs.selectedID))
+        workspace.tabs.select(id: try #require(workspace.tabs.tabs.first?.id))
+
+        // --- AI panel with a mocked streamed answer. ---
+        model.updateSettings { $0.ai.provider = .anthropic }
+        #expect(model.setAIAPIKey("sk-test-not-real", provider: .anthropic))
+        let answer = [
+            "Pages edited in the last 30 days, newest first. ",
+            "I joined `wp_users` for the author name.\n\n```sql\nSELECT p.ID, p.post_title, p.post_modified, u.display_name\n",
+            "FROM wp_posts p\nJOIN wp_users u ON u.ID = p.post_author\n",
+            "WHERE p.post_type = 'page'\n  AND p.post_modified >= NOW() - INTERVAL 30 DAY\nORDER BY p.post_modified DESC\nLIMIT 100;\n```",
+        ]
+        q.assistantProviderOverride = { MockAIProvider(chunks: answer) }
+        q.showsAssistant = true
+        q.assistant.providerID = .anthropic
+        q.assistant.hasKey = true
+        q.assistant.prompt = "Which pages were edited in the last 30 days, with the author's name?"
+        // The view wires the assistant on appear; perform after the first render pass wired it.
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-ai-empty")
+        await q.assistant.perform(.generate)
+        #expect(q.assistant.latestSQL?.hasPrefix("SELECT p.ID") == true)
+        #expect(q.assistant.reviewWarnings.isEmpty)
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-ai")
+        q.assistantProviderOverride = { MockAIProvider(chunks: ["Marks old drafts as trashed. Check the preview first.\n\n```sql\nSELECT ID, post_title FROM wp_posts WHERE post_status = 'draft' AND post_date < NOW() - INTERVAL 1 YEAR;\n\nUPDATE wp_posts SET post_status = 'trash'\nWHERE post_status = 'draft' AND post_date < NOW() - INTERVAL 1 YEAR;\n```"]) }
+        q.assistant.prompt = "Trash drafts older than a year"
+        await q.assistant.perform(.generate)
+        #expect(q.assistant.reviewWarnings.contains { $0.contains("writes") })
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "query-ai-write")
+        // Insert never runs: the editor changes, the database does not.
+        let before = try await session.execute("SELECT COUNT(*) FROM wp_posts WHERE post_status = 'trash'").rows.first?.first
+        q.assistant.insert()
+        let after = try await session.execute("SELECT COUNT(*) FROM wp_posts WHERE post_status = 'trash'").rows.first?.first
+        #expect(before == after)
+        #expect(q.text.contains("UPDATE wp_posts SET post_status = 'trash'"))
 
         await model.closeWorkspace(id: workspaceID)
     }

@@ -67,3 +67,9 @@ Problem: dumps from MySQL 8 (`utf8mb4_0900_ai_ci`) fail on MariaDB / MySQL 5.7 /
 - Multi-select tables in the sidebar (⌘/⇧-click, "Select all matching filter") → **Change storage engine…** (e.g. MyISAM → InnoDB) and **Convert charset/collation…** (`ALTER TABLE … CONVERT TO CHARACTER SET … COLLATE …`, plus optional database default).
 - Sheet shows each table's current engine/collation/rows/size, skips tables already matching, and previews the exact `ALTER TABLE` statements (Copy). PROD guard applies (type DB name). Runs sequentially with per-table progress, cancel between tables, stop-or-continue on error, final report. Warns that DDL is not transactional and may lock large tables.
 - Core: `TableMaintenancePlanner` (pure: current table metadata + requested change → ordered statements + warnings, e.g. FULLTEXT on MyISAM→InnoDB pre-5.6, FK constraints when leaving InnoDB, index key-length limits when moving to utf8mb4) and a runner with progress events. Unit tests + integration tests on MySQL 8.4 / MariaDB 11.
+
+## Phase 5 UI — query editor + AI builder ✅ (2026-10-26)
+
+**Built:** in-house TextKit 2 SQL editor (`App/Sources/Query/SQLTextView.swift`: highlighting via `SQLHighlighter.rehighlightRange`, line numbers, current line, bracket match, auto-indent, ⌘/, ⇥/⇧⇥, autocomplete popup, snippet tab stops, error squiggles); query tab (run/selection/statement, Explain plan tab, Format, result tabs, Messages, editable results, Copy as CSV, footer guard hint); History | Saved | Snippets sidebar; Save as…; AI assistant panel (⌘⇧A) with streaming markdown-lite, Insert/Replace (never runs), SQL review warnings, per-connection sample-rows opt-in; Settings → History and AI (model list, Test key); ⌘K saved queries; connection delete purges history/saved/snippets.
+
+**Status:** see `scripts/ci.sh` and `scripts/snapshots.sh` (query-* PNGs, light + dark).
