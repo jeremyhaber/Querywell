@@ -10,6 +10,8 @@ final class QueryServices {
     let snippets: SnippetStore
     /// Remembered export table rules (per connection).
     let exportRules: ExportRulesStore
+    /// Doctor revision history, entered server RAM and ignored recommendations (per connection).
+    let health: HealthStore
     private(set) var retention: HistoryRetention
     private var histories: [UUID: QueryHistoryStore] = [:]
 
@@ -18,6 +20,7 @@ final class QueryServices {
         savedQueries = SavedQueryStore(fileURL: directory.appendingPathComponent("saved-queries.json"))
         snippets = SnippetStore(fileURL: directory.appendingPathComponent("snippets.json"))
         exportRules = ExportRulesStore(fileURL: directory.appendingPathComponent("export-rules.json"))
+        health = HealthStore(fileURL: directory.appendingPathComponent(AppDirectories.healthFileName))
         self.retention = retention
     }
 
@@ -49,6 +52,7 @@ final class QueryServices {
         try? await savedQueries.purge(connectionID: connectionID)
         try? await snippets.purge(connectionID: connectionID)
         try? await exportRules.purge(connectionID: connectionID)
+        try? await health.purge(connectionID: connectionID)
     }
 
     func clearHistory(connectionID: UUID) async {

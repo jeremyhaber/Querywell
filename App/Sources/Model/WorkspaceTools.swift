@@ -18,6 +18,7 @@ final class WorkspaceTools {
     @ObservationIgnored var sshOptions = SSHClientOptions()
     @ObservationIgnored var consoleModels: [UUID: ConsoleTabModel] = [:]
     @ObservationIgnored var terminalModels: [UUID: TerminalTabModel] = [:]
+    @ObservationIgnored var healthModels: [UUID: HealthTabModel] = [:]
 
     /// Drops the models of tabs that were closed (ending their ssh processes).
     func prune(openTabs: Set<UUID>) {
@@ -26,6 +27,7 @@ final class WorkspaceTools {
             terminalModels[id] = nil
         }
         for id in consoleModels.keys where !openTabs.contains(id) { consoleModels[id] = nil }
+        for id in healthModels.keys where !openTabs.contains(id) { healthModels[id] = nil }
     }
 
     /// The window is closing: end every terminal session.
@@ -33,5 +35,6 @@ final class WorkspaceTools {
         for model in terminalModels.values { model.close() }
         terminalModels = [:]
         consoleModels = [:]
+        healthModels = [:]
     }
 }

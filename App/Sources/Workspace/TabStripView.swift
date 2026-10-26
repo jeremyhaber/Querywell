@@ -48,6 +48,7 @@ struct TabStripView: View {
         Menu {
             Button("New Query") { workspace.newQuery() }
             Button("Console") { workspace.openConsole() }
+            Button("Database Health & Doctor") { workspace.openHealth() }
             Button("SSH Terminal") { workspace.openTerminal() }
                 .disabled(workspace.profile.ssh == nil)
         } label: {

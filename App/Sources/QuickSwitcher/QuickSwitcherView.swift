@@ -179,6 +179,7 @@ struct QuickSwitcherView: View {
         switch action {
         case .newQuery: "plus.square"
         case .newConsole: "terminal"
+        case .openHealth: "heart.text.square"
         case .openConnections: "externaldrive.connected.to.line.below"
         case .settings: "gearshape"
         }
