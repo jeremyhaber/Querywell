@@ -16,6 +16,8 @@ struct WindowActions {
     var nextTab: (() -> Void)?
     var previousTab: (() -> Void)?
     var quickOpen: () -> Void
+    /// Database ▸ Search & Replace… (⇧⌘H); nil while disconnected.
+    var searchReplace: (() -> Void)?
 }
 
 private struct WindowActionsKey: FocusedValueKey {

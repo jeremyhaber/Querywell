@@ -28,6 +28,9 @@ struct TableTabView: View {
         .sheet(isPresented: $model.reviewPresented) {
             ReviewChangesSheet(model: model) { model.reviewPresented = false }
         }
+        .sheet(item: $model.valueEditor) { editor in
+            ValueEditorView(model: editor)
+        }
         .task(id: workspace.connectionEpoch) {
             configure()
             model.loadIfNeeded(epoch: workspace.connectionEpoch)
@@ -84,7 +87,10 @@ struct TableTabView: View {
                         focusColumn: model.inspectorFocusColumn,
                         nullDisplay: model.nullDisplay,
                         onClose: { model.inspectorVisible = false },
-                        editing: inspectorEditing)
+                        editing: inspectorEditing,
+                        onOpenEditor: { column in
+                            if let row = model.selectedRows.first { model.openValueEditor(displayRow: row, column: column) }
+                        })
                         .frame(minWidth: 260, idealWidth: 300, maxWidth: 360, maxHeight: .infinity)
                 }
             }
@@ -176,6 +182,7 @@ struct TableTabView: View {
                     model.inspectorVisible = true
                 }
             },
+            onEditValue: { row, column in model.openValueEditor(displayRow: row, column: column) },
             editing: gridEditing,
             onEditRequestConsumed: { model.editRequest = nil })
     }

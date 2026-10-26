@@ -186,7 +186,131 @@ struct SnapshotTests {
             meta.append("(\(i + 1), \(1038 + (i % 50) * 2), '\(["_edit_last", "_wp_page_template", "_thumbnail_id"][i % 3])', 'v\(i)')")
         }
         _ = try await session.execute("REPLACE INTO wp_postmeta (meta_id, post_id, meta_key, meta_value) VALUES " + meta.joined(separator: ", "))
+        try await createOptionsFixture(session)
         _ = try await session.execute("ANALYZE TABLE wp_users, wp_posts, wp_postmeta")
+    }
+
+    // MARK: wp_options fixture
+
+    static let oldSite = "http://old.example.com"
+    static let newSite = "https://new.example.org"
+
+    /// `s:N:"…";` with the byte length PHP would write.
+    static func phpString(_ s: String) -> String { "s:\(s.utf8.count):\"\(s)\";" }
+    static func phpArray(_ pairs: [(String, String)]) -> String {
+        "a:\(pairs.count):{" + pairs.map { phpString($0.0) + $0.1 }.joined() + "}"
+    }
+    static func phpBools(_ names: [String], _ value: Bool = true) -> String {
+        phpArray(names.map { ($0, "b:\(value ? 1 : 0);") })
+    }
+
+    /// A `wp_user_roles`-like option value.
+    static var userRoles: String {
+        func role(_ name: String, _ caps: String) -> String { phpArray([("name", phpString(name)), ("capabilities", caps)]) }
+        return phpArray([
+            ("administrator", role("Administrator", phpBools(["switch_themes", "edit_themes", "activate_plugins", "edit_plugins", "edit_users", "manage_options"]))),
+            ("editor", role("Editor", phpBools(["moderate_comments", "edit_posts", "publish_posts", "edit_others_posts"]))),
+            ("author", role("Author", phpBools(["edit_posts", "publish_posts", "upload_files"]))),
+            ("subscriber", role("Subscriber", phpBools(["read"]) )),
+            ("customer", role("Customer", phpArray([("read", "b:1;"), ("purchase", "b:0;"), ("credit_limit", "d:250.5;"), ("tier", "i:2;"), ("manager", "N;")]))),
+        ])
+    }
+
+    static var themeJSON: String {
+        """
+        {
+          "version": 2,
+          "siteurl": "http:\\/\\/old.example.com",
+          "settings": {
+            "color": {
+              "custom": true,
+              "palette": [
+                {"slug": "primary", "color": "#2459D6"},
+                {"slug": "accent", "color": "#6A3FC2"}
+              ]
+            },
+            "layout": {"contentSize": "720px", "wideSize": "1100px"}
+          },
+          "logo": "http:\\/\\/old.example.com\\/wp-content\\/logo.svg",
+          "tags": ["wordpress", "theme", "json"],
+          "enabled": true,
+          "ratio": 1.5,
+          "parent": null
+        }
+        """
+    }
+
+    /// Serialized widget with the old URL inside, so a replace has to fix `s:N:` lengths.
+    static var widgetText: String {
+        phpArray([
+            ("title", phpString("Visit our old site")),
+            ("text", phpString("<a href=\"\(oldSite)/about\">About us at \(oldSite)</a>")),
+            ("filter", "b:1;"),
+        ])
+    }
+
+    /// `s:12:"…"` declared shorter than the bytes: malformed on purpose.
+    static var brokenWidget: String {
+        "a:2:{s:5:\"title\";s:4:\"Home\";s:3:\"url\";s:12:\"\(oldSite)/home\";}"
+    }
+
+    /// `wp_options`, `wp_usermeta` and `wp_links` with serialized, JSON and plain values. Idempotent.
+    private func createOptionsFixture(_ session: any DatabaseSession) async throws {
+        let q = { (s: String) in SQLDialect(.mysql).quoteString(s) }
+        let ddl = [
+            """
+            CREATE TABLE IF NOT EXISTS wp_options (
+              option_id bigint unsigned NOT NULL AUTO_INCREMENT,
+              option_name varchar(191) NOT NULL DEFAULT '',
+              option_value longtext NOT NULL,
+              autoload varchar(20) NOT NULL DEFAULT 'yes',
+              PRIMARY KEY (option_id), UNIQUE KEY option_name (option_name)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS wp_usermeta (
+              umeta_id bigint unsigned NOT NULL AUTO_INCREMENT,
+              user_id bigint unsigned NOT NULL DEFAULT 0,
+              meta_key varchar(255) DEFAULT NULL,
+              meta_value longtext,
+              PRIMARY KEY (umeta_id), KEY user_id (user_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS wp_links (
+              link_id bigint unsigned NOT NULL AUTO_INCREMENT,
+              link_url varchar(255) NOT NULL DEFAULT '',
+              link_name varchar(255) NOT NULL DEFAULT '',
+              PRIMARY KEY (link_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+        ]
+        for sql in ddl { _ = try await session.execute(sql) }
+        _ = try await session.execute("DELETE FROM wp_options")
+        let options: [(Int, String, String, String)] = [
+            (1, "siteurl", Self.oldSite, "yes"),
+            (2, "home", Self.oldSite, "yes"),
+            (3, "blogname", "Old Example Studio", "yes"),
+            (4, "wp_user_roles", Self.userRoles, "yes"),
+            (5, "widget_text", Self.widgetText, "yes"),
+            (6, "theme_mods_json", Self.themeJSON, "yes"),
+            (7, "_transient_feed_3f1c", Self.phpArray([("url", Self.phpString(Self.oldSite + "/feed")), ("items", "i:12;")]), "no"),
+            (8, "legacy_widget", Self.brokenWidget, "no"),
+            (9, "timezone_string", "Europe/Berlin", "yes"),
+        ]
+        let rows = options.map { "(\($0.0), \(q($0.1)), \(q($0.2)), \(q($0.3)))" }.joined(separator: ", ")
+        _ = try await session.execute("REPLACE INTO wp_options (option_id, option_name, option_value, autoload) VALUES " + rows)
+        _ = try await session.execute("DELETE FROM wp_usermeta")
+        let meta: [(Int, Int, String, String)] = [
+            (1, 1, "nickname", "jeremy"),
+            (2, 1, "wp_capabilities", Self.phpBools(["administrator"])),
+            (3, 1, "dashboard_links", Self.phpArray([("title", Self.phpString("Old website")), ("url", Self.phpString(Self.oldSite))])),
+        ]
+        _ = try await session.execute("REPLACE INTO wp_usermeta (umeta_id, user_id, meta_key, meta_value) VALUES "
+            + meta.map { "(\($0.0), \($0.1), \(q($0.2)), \(q($0.3)))" }.joined(separator: ", "))
+        _ = try await session.execute("DELETE FROM wp_links")
+        _ = try await session.execute("REPLACE INTO wp_links (link_id, link_url, link_name) VALUES "
+            + "(1, \(q(Self.oldSite + "/blog")), 'Blog'), (2, 'https://wordpress.org/', 'WordPress')")
     }
 
     /// `CGWindowListCreateImage`, resolved at runtime: it's deprecated and warnings are errors.
@@ -458,6 +582,158 @@ struct SnapshotTests {
         try await renderSheet(BatchOperationsSheet(model: batch) {}, model: model, size: CGSize(width: 740, height: 680), name: "batch-convert")
         #expect(batch.plan?.statements.contains { $0.contains("qw_legacy_utf8") } == true)
 
+        await model.closeWorkspace(id: workspaceID)
+    }
+
+    // MARK: Data editors and search & replace
+
+    @Test func dataEditorsAndSearchReplace() async throws {
+        let (model, dir) = try await makeModel()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = try await seed(model)
+        let workspaceID = try #require(await model.connect(profileID: id))
+        let workspace = try #require(model.workspaces[workspaceID])
+        await workspace.connect()
+        let session = try #require(workspace.live?.session)
+        try await createWordPressFixture(session)
+        workspace.refreshSchema()
+        try await waitUntil { workspace.browser.current?.tables.contains { $0.ref.name == "wp_options" } == true }
+        workspace.gate.confirmationHandler = { _ in true }  // tests bypass the confirmation sheet
+        let schema = "querywell_test"
+
+        func optionValue(_ name: String) async throws -> String {
+            let r = try await session.execute("SELECT option_value FROM wp_options WHERE option_name = '\(name)'")
+            guard case .text(let s)? = r.rows.first?.first else { return "" }
+            return s
+        }
+
+        // --- Value editor: JSON tree with an edit (size footer), then Raw with an error banner. ---
+        let theme = try await optionValue("theme_mods_json")
+        #expect(theme == Self.themeJSON)
+        let json = ValueEditorModel(
+            title: "wp_options · option_value", subtitle: "option_id 6 · longtext", data: Data(theme.utf8), isReadOnly: false,
+            onSave: { _ in nil })
+        #expect(json.mode == .json)
+        json.json.selection = "0.2"
+        #expect(json.json.commitValue(id: "0.0", text: "3") == nil)
+        json.json.add(to: "root", type: "string")
+        #expect(json.hasChanges && json.canSave)
+        try await renderSheet(ValueEditorView(model: json), model: model, size: CGSize(width: 900, height: 640), name: "editor-json-tree")
+
+        let broken = Self.themeJSON.replacingOccurrences(of: "\"wideSize\": \"1100px\"", with: "\"wideSize\": \"1100px\"\n    \"extra\": 1")
+        let invalid = ValueEditorModel(
+            title: "wp_options · option_value", subtitle: "option_id 6 · longtext", data: Data(broken.utf8), isReadOnly: false,
+            onSave: { _ in nil })
+        invalid.json.jumpToError()
+        #expect(invalid.json.error != nil && !invalid.canSave)
+        try await renderSheet(ValueEditorView(model: invalid), model: model, size: CGSize(width: 900, height: 640), name: "editor-json-raw-error")
+
+        // --- Value editor: PHP serialized (wp_user_roles-like), edited. ---
+        let roles = try await optionValue("wp_user_roles")
+        #expect(roles == Self.userRoles)
+        let php = ValueEditorModel(
+            title: "wp_options · option_value", subtitle: "option_id 4 · longtext", data: Data(roles.utf8), isReadOnly: false,
+            onSave: { _ in nil })
+        #expect(php.mode == .php && php.detectedMode == .php)
+        php.php.collapseAll()
+        php.php.toggle("0")
+        php.php.toggle("0.1")
+        php.php.toggle("4")
+        php.php.toggle("4.1")
+        #expect(php.php.commitValue(id: "4.1.2", text: "300.25") == nil)
+        php.php.selection = "4.1.2"
+        #expect(php.php.footer.hasPrefix("Will save"))
+        try await renderSheet(ValueEditorView(model: php), model: model, size: CGSize(width: 900, height: 700), name: "editor-php")
+
+        // Malformed: parser error with byte offset, repair offered with a preview first.
+        let malformed = ValueEditorModel(
+            title: "wp_options · option_value", subtitle: "option_id 8 · longtext", data: Data(Self.brokenWidget.utf8), isReadOnly: false,
+            onSave: { _ in nil })
+        #expect(malformed.php.parseError != nil)
+        try await renderSheet(ValueEditorView(model: malformed), model: model, size: CGSize(width: 900, height: 560), name: "editor-php-malformed")
+        #expect(malformed.php.proposeRepair() == nil)
+        let proposal = try #require(malformed.php.repairProposal)
+        #expect(!proposal.fixes.isEmpty && !malformed.php.isValid)
+        try await renderSheet(PHPRepairPreview(proposal: proposal, accept: {}, cancel: {}), model: model,
+                              size: CGSize(width: 600, height: 300), name: "editor-php-repair")
+
+        // --- Search & Replace against the real database. ---
+        workspace.browser.select("wp_options", command: false, shift: false, visible: ["wp_options"])
+        workspace.presentSearchReplace()
+        let sr = try #require(workspace.searchReplace)
+        try await waitUntil { !sr.isLoadingTables && sr.tables.contains { $0.name == "wp_options" } }
+        await sr.waitForStructures()
+        #expect(sr.wordPressPrefix == "wp_")
+        #expect(sr.selected.contains(TableRef(schema: schema, name: "wp_options")))
+        #expect(!sr.selected.contains(TableRef(schema: schema, name: "qw_legacy_myisam")))
+        sr.search = Self.oldSite
+        sr.replace = Self.newSite
+        let size = CGSize(width: 1060, height: 760)
+        try await renderSheet(SearchReplaceSheet(model: sr) {}, model: model, size: size, name: "search-replace-configure")
+
+        await sr.runPreview()
+        let preview = try #require(sr.previewReport)
+        #expect(preview.mode == .dryRun)
+        #expect(preview.rowsChanged == 7)
+        #expect(preview.replacements == 9)
+        #expect(preview.invalidSerialized.map(\.column) == ["option_value"])
+        #expect(preview.invalidSerialized.first?.primaryKey.first?.value == "8")
+        #expect(preview.tables.filter { $0.rowsChanged > 0 }.count == 3)
+        #expect(try await optionValue("home") == Self.oldSite, "a dry run must not write")
+        #expect(sr.previewIsCurrent && sr.canApply)
+        #expect(sr.applySummary == "Will update 7 rows in 3 tables")
+        try await renderSheet(SearchReplaceSheet(model: sr) {}, model: model, size: size, name: "search-replace-preview")
+
+        // Changing an option invalidates the preview.
+        sr.caseSensitive = false
+        #expect(!sr.previewIsCurrent && !sr.canApply)
+        sr.caseSensitive = true
+        #expect(sr.canApply)
+
+        // An invalid serialized value opens in the PHP editor on its table (via the open table tab).
+        let location = try #require(preview.invalidSerialized.first)
+        workspace.openInvalidSerialized(location)
+        let optionsModel = try #require(workspace.tableModel(forTable: TableRef(schema: schema, name: "wp_options")))
+        try await waitUntil(.seconds(20)) { optionsModel.valueEditor != nil }
+        let handed = try #require(optionsModel.valueEditor)
+        #expect(handed.mode == .php && handed.php.parseError != nil)
+        #expect(handed.php.proposeRepair() == nil)
+        #expect(!handed.canSave, "a repair is only a proposal until accepted")
+        handed.php.acceptRepair()
+        #expect(handed.canSave && handed.php.isValid)
+        #expect(handed.save())
+        #expect(optionsModel.pendingEditCount == 1)
+        #expect(optionsModel.valueEditor == nil)
+        optionsModel.discardAll()
+        let untouchedBroken = try await optionValue("legacy_widget")
+        #expect(untouchedBroken == Self.brokenWidget, "saving into the grid does not write to the database")
+        workspace.searchReplacePresented = false
+
+        // Apply.
+        workspace.presentSearchReplace()
+        try await waitUntil { !sr.isLoadingTables && sr.tables.contains { $0.name == "wp_options" } }
+        await sr.waitForStructures()
+        #expect(sr.search == Self.oldSite, "the last pair is remembered for the connection")
+        await sr.runPreview()
+        sr.beginApply()
+        #expect(sr.confirmingApply)
+        try await renderSheet(SearchReplaceSheet(model: sr) {}, model: model, size: size, name: "search-replace-confirm")
+        await sr.confirmApply()
+        let applied = try #require(sr.applyReport)
+        #expect(applied.mode == .apply)
+        #expect(applied.rowsChanged == 7 && applied.conflicts.isEmpty && applied.failedTables.isEmpty)
+        #expect(try await optionValue("home") == Self.newSite)
+        let widget = try await optionValue("widget_text")
+        let parsed = try PHPSerializedParser.parse(widget)  // throws if any s:N: length is wrong
+        #expect(parsed.root.entries.count == 3)
+        #expect(widget.contains(Self.newSite + "/about"))
+        let themeAfter = try await optionValue("theme_mods_json")
+        #expect(themeAfter.contains("https:\\/\\/new.example.org\\/wp-content\\/logo.svg"), "JSON keeps its escaped slashes")
+        #expect(try await optionValue("legacy_widget") == Self.brokenWidget, "invalid serialized values are never touched")
+        try await renderSheet(SearchReplaceSheet(model: sr) {}, model: model, size: size, name: "search-replace-applied")
+
+        // Put the fixture back for the next run.
+        try await createOptionsFixture(session)
         await model.closeWorkspace(id: workspaceID)
     }
 }

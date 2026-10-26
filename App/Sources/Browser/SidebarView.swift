@@ -229,6 +229,11 @@ struct WorkspaceSidebar: View {
         }
         .disabled(unsupported != nil || readOnly)
         .help(unsupported ?? (readOnly ? "This connection is read-only." : "Change storage engine or character set"))
+        Button("Search & Replace…") {
+            workspace.presentSearchReplace(preselect: Set(realTables.map(\.ref.name)))
+        }
+        .disabled(realTables.isEmpty || !workspace.isConnected)
+        .help("Find and replace text in these tables, keeping serialized data valid")
         Divider()
         Button(targets.count > 1 ? "Empty \(realTables.count) Tables…" : "Truncate…") {
             run(targets: realTables, destructive: .truncate)

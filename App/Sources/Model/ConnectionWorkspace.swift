@@ -35,6 +35,9 @@ final class ConnectionWorkspace: Identifiable {
     var closePrompt: TabClosePrompt?
     /// The open "Table Operations" sheet, if any.
     var batchOperations: BatchOperationsModel?
+    /// Database ▸ Search & Replace… (kept between openings so the last search/replace pair is still there).
+    var searchReplace: SearchReplaceModel?
+    var searchReplacePresented = false
 
     @ObservationIgnored private(set) var live: LiveConnection?
     @ObservationIgnored weak var window: NSWindow?

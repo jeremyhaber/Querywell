@@ -99,6 +99,12 @@ struct ConnectionWindowContent: View {
                     BatchOperationsSheet(model: ops) { workspace.batchOperations = nil }
                 }
             }
+            .sheet(isPresented: $workspace.searchReplacePresented) {
+                if let sr = workspace.searchReplace {
+                    SearchReplaceSheet(model: sr) { workspace.searchReplacePresented = false }
+                        .interactiveDismissDisabled(sr.isRunning)
+                }
+            }
             .appAlert()
     }
 
@@ -114,7 +120,8 @@ struct ConnectionWindowContent: View {
             selectTab: { workspace.selectTab(at: $0) },
             nextTab: { workspace.tabs.selectNext() },
             previousTab: { workspace.tabs.selectPrevious() },
-            quickOpen: { showSwitcher.toggle() })
+            quickOpen: { showSwitcher.toggle() },
+            searchReplace: workspace.isConnected ? { workspace.presentSearchReplace() } : nil)
     }
 
     // MARK: Body by state
