@@ -146,6 +146,10 @@ private struct TabItemView: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onSelect)
         .onMiddleClick(perform: onClose)
+        // Full Keyboard Access: the tab itself is a stop in the key-view loop; Space/Return selects it.
+        .focusable()
+        .onKeyPress(.space) { onSelect(); return .handled }
+        .onKeyPress(.return) { onSelect(); return .handled }
         .draggable(tab.id.uuidString)
         .dropDestination(for: String.self) { items, _ in
             guard let id = items.first.flatMap(UUID.init(uuidString:)) else { return false }

@@ -119,6 +119,7 @@ final class SQLCompletionPanelController {
         let width: CGFloat = 320
         let panel = self.panel ?? makePanel()
         self.panel = panel
+        panel.appearance = parent.effectiveAppearance  // a child window does not inherit an explicitly set window appearance
         panel.setContentSize(NSSize(width: width, height: height))
 
         // Below the caret line; above it when there is no room.

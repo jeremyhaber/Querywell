@@ -83,7 +83,7 @@ struct QueryTabView: View {
                         ToastView(toast: toast).padding(.bottom, 12).transition(.opacity)
                     }
                 }
-                .animation(.easeOut(duration: 0.18), value: model.toast)
+                .motionAnimation(.easeOut(duration: 0.18), value: model.toast)
         }
     }
 

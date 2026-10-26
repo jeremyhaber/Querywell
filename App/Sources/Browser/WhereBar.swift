@@ -174,6 +174,7 @@ final class CompletionPopup {
         let height = CGFloat(rows) * CompletionListView.rowHeight + 8
         let width: CGFloat = 320
         guard let window = field.window else { return }
+        panel.appearance = window.effectiveAppearance
         let fieldRect = field.convert(field.bounds, to: nil)
         let screenRect = window.convertToScreen(fieldRect)
         let origin = NSPoint(x: screenRect.minX - 4, y: screenRect.minY - height - 6)
@@ -202,10 +203,35 @@ final class CompletionListView: NSView {
         didSet { needsDisplay = true }
     }
     var highlighted = 0 {
-        didSet { needsDisplay = true }
+        didSet {
+            needsDisplay = true
+            if highlighted != oldValue, items.indices.contains(highlighted) {
+                NSAccessibility.post(element: self, notification: .selectedChildrenChanged)
+                Announce.post(items[highlighted].label)
+            }
+        }
     }
     var onPick: ((Int) -> Void)?
     override var isFlipped: Bool { true }
+
+    // VoiceOver: the custom-drawn list is a list of rows; the highlighted row is selected and its label
+    // is announced when the highlight moves (focus stays in the field).
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .list }
+    override func accessibilityLabel() -> String? { "Filter suggestions" }
+    override func accessibilityChildren() -> [Any]? {
+        items.enumerated().map { index, item in
+            let row = NSAccessibilityElement()
+            row.setAccessibilityRole(.row)
+            row.setAccessibilityLabel(item.label)
+            row.setAccessibilityParent(self)
+            row.setAccessibilitySelected(index == highlighted)
+            return row
+        }
+    }
+    override func accessibilitySelectedChildren() -> [Any]? {
+        (accessibilityChildren() ?? []).enumerated().filter { $0.offset == highlighted }.map(\.element)
+    }
 
     /// The window of `maxRows` items that contains the highlight.
     private var firstVisible: Int {

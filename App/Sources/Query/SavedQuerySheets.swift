@@ -109,6 +109,7 @@ struct SnippetForm: View {
                     .font(.system(size: 12, design: .monospaced))
                     .scrollContentBackground(.hidden)
                     .frame(height: 120).padding(4)
+                    .accessibilityLabel("SQL")
                     .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
                     .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.separator))
                 Text("Use $1, ${2:default} for tab stops and $0 for the final cursor.")
