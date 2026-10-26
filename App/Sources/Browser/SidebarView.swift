@@ -352,6 +352,9 @@ struct TabContentView: View {
         if case .table = tab.kind, let model = workspace.tableModel(forTab: tab) {
             TableTabView(model: model, workspace: workspace)
                 .id(tab.id)
+        } else if case .query = tab.kind, let model = workspace.queryModel(forTab: tab) {
+            QueryTabView(model: model, workspace: workspace)
+                .id(tab.id)
         } else {
             placeholder(for: tab)
         }
@@ -360,7 +363,7 @@ struct TabContentView: View {
     private func placeholder(for tab: WorkspaceTab) -> some View {
         let (symbol, text): (String, String) = switch tab.kind {
         case .table: ("tablecells", "Table browser")
-        case .query: ("chevron.left.forwardslash.chevron.right", "Query editor — Phase 5")
+        case .query: ("chevron.left.forwardslash.chevron.right", "Query editor")
         case .console: ("terminal", "Console — Phase 7")
         case .terminal: ("apple.terminal", "Terminal — Phase 7")
         }

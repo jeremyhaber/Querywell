@@ -117,6 +117,17 @@ final class TableDataModel {
 
     let table: TableRef
 
+    /// A query result (query editor) edited in place instead of a paged table: the SQL is re-run on
+    /// reload, columns are named as the base table's, and no count / paging is involved.
+    struct FixedQuery {
+        var sql: String
+        /// Result column i shows base-table column `columnMap[i]`.
+        var columnMap: [String]
+        /// The rows the editor already has; used for the first load so the query isn't run twice.
+        var seed: QueryResult?
+    }
+    @ObservationIgnored var fixedQuery: FixedQuery?
+
     // Environment, injected by the owner.
     @ObservationIgnored var sessionProvider: @MainActor () -> (any DatabaseSession)? = { nil }
     @ObservationIgnored var inspectorProvider: @MainActor () -> (any SchemaInspector)? = { nil }
@@ -286,10 +297,17 @@ final class TableDataModel {
 
         let dialect = SQLDialect(session.engine)
         let query = currentQuery()
-        let sql = query.sql(dialect: dialect)
+        let sql = fixedQuery?.sql ?? query.sql(dialect: dialect)
         lastSQL = sql
         do {
-            let result = try await session.execute(sql)
+            let result: QueryResult
+            if var fixed = fixedQuery, let seed = fixed.seed {
+                result = seed
+                fixed.seed = nil
+                fixedQuery = fixed
+            } else {
+                result = try await session.execute(sql)
+            }
             guard gen == generation else { return }
             loadedContent = GridContent(
                 columns: mergedColumns(result.columns), rows: result.rows, offset: query.offset, duration: result.duration,
@@ -304,7 +322,11 @@ final class TableDataModel {
             selectedRows = preserveViewport ? (restoreSelection ?? []).filter { $0 < (content?.rows.count ?? 0) } : []
             hasLoaded = true
             isLoading = false
-            startCount(generation: gen, session: session, dialect: dialect, query: query, rowsOnPage: result.rows.count)
+            if fixedQuery != nil {
+                count = .exact(Int64(result.rows.count))
+            } else {
+                startCount(generation: gen, session: session, dialect: dialect, query: query, rowsOnPage: result.rows.count)
+            }
         } catch {
             guard gen == generation else { return }
             failure = LoadFailure(message: SchemaBrowserModel.message(error), sql: sql)
@@ -314,15 +336,16 @@ final class TableDataModel {
     }
 
     private func mergedColumns(_ result: [ColumnInfo]) -> [GridColumn] {
-        result.map { info in
-            let def = definition(of: info.name)
-            let fk = foreignKey(for: info.name)
+        result.enumerated().map { index, info in
+            let name = fixedQuery.flatMap { $0.columnMap.indices.contains(index) ? $0.columnMap[index] : nil } ?? info.name
+            let def = definition(of: name)
+            let fk = foreignKey(for: name)
             let base = def?.dataType ?? info.typeName
             let full = def?.fullType ?? info.typeName
             return GridColumn(
-                name: info.name,
+                name: name,
                 typeLabel: fk.map { "→ \($0.referenced.name)" } ?? base,
-                presentation: ColumnPresentation(name: info.name, dataType: base, fullType: full),
+                presentation: ColumnPresentation(name: name, dataType: base, fullType: full),
                 isPrimaryKey: def?.isPrimaryKey ?? false,
                 foreignKey: fk,
                 fullType: full)

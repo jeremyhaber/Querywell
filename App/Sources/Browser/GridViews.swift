@@ -241,6 +241,15 @@ final class GridHeaderCell: NSTableHeaderCell {
     }
 
     override func draw(withFrame cellFrame: NSRect, in controlView: NSView) {
+        // The empty strip right of the last column is drawn with this cell too: paint it blank, not as a copy of the last header.
+        if let header = controlView as? NSTableHeaderView, let table = header.tableView,
+           !table.tableColumns.indices.contains(where: { abs(header.headerRect(ofColumn: $0).minX - cellFrame.minX) < 1 }) {
+            ThemeNS.sidebar.setFill()
+            cellFrame.fill()
+            ThemeNS.separator.setFill()
+            NSRect(x: cellFrame.minX, y: cellFrame.maxY - 1, width: cellFrame.width, height: 1).fill()
+            return
+        }
         (info.isFiltered ? ThemeNS.selectedRow : ThemeNS.sidebar).setFill()
         cellFrame.fill()
         ThemeNS.separator.setFill()

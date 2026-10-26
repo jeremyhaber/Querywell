@@ -63,6 +63,19 @@ enum ThemeNS {
 
     static var tabQuery: NSColor { .dynamic(light: 0x6A3FC2, dark: 0xA98BF0) }
 
+    // Phase 5 (query editor). Light values are the design's; darks keep >= 4.5:1 on the dark editor.
+    static var syntaxKeyword: NSColor { .dynamic(light: 0x6A3FC2, dark: 0xB79BF5) }
+    static var syntaxString: NSColor { .dynamic(light: 0x1F7A4D, dark: 0x6FCF9B) }
+    static var syntaxFunction: NSColor { .dynamic(light: 0x0F6E8C, dark: 0x56C1E0) }
+    static var syntaxNumber: NSColor { .dynamic(light: 0xB05A00, dark: 0xE8A25C) }
+    /// The design's #8A8D98 is 3.3:1 on white; this is the darker tertiary text shade (4.5:1).
+    static var syntaxComment: NSColor { .dynamic(light: 0x727581, dark: 0x8F929E) }
+    static var syntaxVariable: NSColor { .dynamic(light: 0x9C3F8F, dark: 0xE08AD6) }
+    static var editorCurrentLine: NSColor { .dynamic(light: 0xF5F7FC, dark: 0x262A33) }
+    static var editorBracketMatch: NSColor { .dynamic(light: 0xD3E0FA, dark: 0x34518A) }
+    static var editorLineNumber: NSColor { .dynamic(light: 0x8A8D98, dark: 0x7E818D) }
+    static var warningAmberFill: NSColor { .dynamic(light: 0xFFF1CC, dark: 0x4A3B12) }
+
     // Phase 4 (data grid).
     static var pendingEditCell: NSColor { .dynamic(light: 0xFFF4D6, dark: 0x4A3B12) }
     static var pendingEditBar: NSColor { .dynamic(light: 0xD48806, dark: 0xE8A33A) }
@@ -116,6 +129,12 @@ enum Theme {
     static var dangerBackground: Color { Color(nsColor: ThemeNS.dangerBackground) }
 
     static var tabQuery: Color { Color(nsColor: ThemeNS.tabQuery) }
+    static var syntaxKeyword: Color { Color(nsColor: ThemeNS.syntaxKeyword) }
+    static var syntaxString: Color { Color(nsColor: ThemeNS.syntaxString) }
+    static var syntaxFunction: Color { Color(nsColor: ThemeNS.syntaxFunction) }
+    static var syntaxNumber: Color { Color(nsColor: ThemeNS.syntaxNumber) }
+    static var syntaxComment: Color { Color(nsColor: ThemeNS.syntaxComment) }
+    static var warningAmberFill: Color { Color(nsColor: ThemeNS.warningAmberFill) }
 
     static var pendingEditCell: Color { Color(nsColor: ThemeNS.pendingEditCell) }
     static var pendingEditBar: Color { Color(nsColor: ThemeNS.pendingEditBar) }

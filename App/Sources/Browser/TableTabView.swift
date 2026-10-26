@@ -180,23 +180,7 @@ struct TableTabView: View {
             onEditRequestConsumed: { model.editRequest = nil })
     }
 
-    private var gridEditing: GridEditing? {
-        guard model.content != nil else { return nil }
-        return GridEditing(
-            isEditable: model.canEdit,
-            info: { model.editInfo(displayRow: $0, column: $1) },
-            commitText: { model.applyText(displayRow: $0, column: $1, text: $2) },
-            setNull: { model.setNull(displayRow: $0, column: $1) },
-            setEmpty: { model.setEmpty(displayRow: $0, column: $1) },
-            setDefault: { model.setDefault(displayRow: $0, column: $1) },
-            revertCell: { model.revertCell(displayRow: $0, column: $1) },
-            clearCell: { model.clearCell(displayRow: $0, column: $1) },
-            deleteRows: { model.deleteRows($0) },
-            duplicateRows: { model.duplicateRows($0) },
-            revertRows: { model.revertRows($0) },
-            rowHasPending: { model.rowHasPendingChanges($0) },
-            notice: { model.show(toast: $0, isError: true) })
-    }
+    private var gridEditing: GridEditing? { model.makeGridEditing() }
 
     /// Inspector editing for the first selected row; nil when the table can't be edited.
     private var inspectorEditing: InspectorEditing? {

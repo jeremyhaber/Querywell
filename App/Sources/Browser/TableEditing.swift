@@ -494,3 +494,27 @@ extension TableDataModel {
         }
     }
 }
+
+extension TableDataModel {
+    /// The editing hooks the grid needs; nil until a page has loaded.
+    func makeGridEditing() -> GridEditing? {
+        guard content != nil else { return nil }
+        return GridEditing(
+            isEditable: canEdit,
+            info: { [self] in editInfo(displayRow: $0, column: $1) },
+            commitText: { [self] in applyText(displayRow: $0, column: $1, text: $2) },
+            setNull: { [self] in setNull(displayRow: $0, column: $1) },
+            setEmpty: { [self] in setEmpty(displayRow: $0, column: $1) },
+            setDefault: { [self] in setDefault(displayRow: $0, column: $1) },
+            revertCell: { [self] in revertCell(displayRow: $0, column: $1) },
+            clearCell: { [self] in clearCell(displayRow: $0, column: $1) },
+            deleteRows: { [self] in deleteRows($0) },
+            duplicateRows: { [self] in
+                // Query results show a subset of the table's columns; inserting from them would hide values.
+                if fixedQuery == nil { duplicateRows($0) }
+            },
+            revertRows: { [self] in revertRows($0) },
+            rowHasPending: { [self] in rowHasPendingChanges($0) },
+            notice: { [self] in show(toast: $0, isError: true) })
+    }
+}

@@ -61,6 +61,20 @@ final class WriteGate {
         }
     }
 
+    /// Shows the confirmation for a request that `QueryRunner.prepare` produced (the query editor
+    /// classifies and guards by itself; this is only the human step). True when the user confirmed.
+    func confirm(_ request: ConfirmationRequest, actionTitle: String = "Run") async -> Bool {
+        lastBlockedReason = nil
+        if let confirmationHandler { return await confirmationHandler(request) }
+        return await presentSheet(request, actionTitle: actionTitle)
+    }
+
+    /// Tells the user a write was refused because the connection is read-only.
+    func reportBlocked(_ reason: String) async {
+        lastBlockedReason = reason
+        await showBlocked(reason)
+    }
+
     // MARK: Presentation
 
     private func showBlocked(_ reason: String) async {
