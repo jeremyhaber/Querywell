@@ -106,6 +106,21 @@ struct WriteGuardTests {
         #expect(request(decide("DROP TABLE t", nothing))?.requiresTypedName == "PRODUCTION")
     }
 
+    @Test func gridEditUpdatesOnProductionNeedOnlyAClick() throws {
+        let updates = ["UPDATE `wp_posts` SET `post_title` = 'x' WHERE `ID` = 1 AND `post_title` = 'y'"]
+        let grid = try #require(request(WriteGuard.evaluate(statements: updates, context: ctx(prod: true), origin: .gridEdit)))
+        #expect(grid.requiresTypedName == nil)
+        // The same UPDATE typed in the editor still needs the database name.
+        let script = try #require(request(WriteGuard.evaluate(statements: updates, context: ctx(prod: true))))
+        #expect(script.requiresTypedName == "shop")
+        // Grid deletes still need typing.
+        let del = try #require(request(WriteGuard.evaluate(
+            statements: ["DELETE FROM `wp_posts` WHERE `ID` = 1"], context: ctx(prod: true), origin: .gridEdit)))
+        #expect(del.requiresTypedName == "shop")
+        // Off Production, PK-targeted grid edits don't confirm at all.
+        #expect(WriteGuard.evaluate(statements: updates, context: ctx(), origin: .gridEdit) == .allow)
+    }
+
     @Test func requestListsOnlyWriteLikeStatements() throws {
         let r = try #require(request(decide("USE shop; SELECT 1; UPDATE t SET a=1 WHERE id=1; COMMIT", ctx(prod: true))))
         #expect(r.statements.count == 1)
