@@ -25,6 +25,8 @@ final class FilterEditorModel {
 
     private(set) var values: [DistinctValue] = []
     private(set) var isTruncated = false
+    /// Set when the exact list ran out of time and the counts come from a sample of this many rows.
+    private(set) var sampledRows: Int?
     private(set) var isLoading = false
     private(set) var loadError: String?
 
@@ -85,6 +87,7 @@ final class FilterEditorModel {
             guard gen == generation else { return }
             values = result.values
             isTruncated = result.isTruncated
+            sampledRows = result.sampledRows
         } catch {
             guard gen == generation else { return }
             loadError = SchemaBrowserModel.message(error)

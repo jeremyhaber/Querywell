@@ -88,6 +88,11 @@ struct FilterPopoverView: View {
                     Text("No values").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
             }
+            if let sampled = model.sampledRows {
+                Text("Based on a sample of \(CompactCount.string(Int64(sampled))) rows")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
+                    .help("Counting every row took too long, so these counts come from a sample. Filtering by a value still searches the whole table.")
+            }
             if model.isTruncated {
                 Text("Showing top 100").font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
             }

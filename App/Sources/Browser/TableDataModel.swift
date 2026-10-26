@@ -136,6 +136,9 @@ final class TableDataModel {
     /// Opens another table tab, optionally filtered (FK navigation).
     @ObservationIgnored var openTable: @MainActor (TableRef, ColumnFilter?) -> Void = { _, _ in }
     @ObservationIgnored var reportNotice: @MainActor (String) -> Void = { _ in }
+    /// Opens another short-lived session to the same server (exact counts and funnel value lists run there so
+    /// they never queue behind the page requests on the main session). nil/absent: they use the main session.
+    @ObservationIgnored var auxSessionOpener: (@MainActor () async throws -> (any DatabaseSession)?)?
 
     var pageSize = 500
     var nullDisplay = "NULL"
@@ -152,6 +155,24 @@ final class TableDataModel {
     var whereDraft = ""
     private(set) var appliedWhere = ""
     private(set) var offset = 0
+    /// Where the current page starts in key order (keyset paging); `.first` for OFFSET paging and page one.
+    private(set) var pageCursor: PageCursor = .first
+    /// Shown in the footer when paging with a deep OFFSET (slow); nil otherwise.
+    private(set) var deepPagingNotice: String?
+    private(set) var isCountingExactly = false
+
+    enum PageCursor: Equatable {
+        case first
+        /// The page after the row with these order-column values.
+        case after([DatabaseValue])
+        /// The page before the row with these values; `fromOffset` is the offset of the page we came from.
+        case before([DatabaseValue], fromOffset: Int)
+        /// The final rows of the result.
+        case last
+    }
+
+    /// Pages deeper than this many rows without keyset paging get the "slow" notice.
+    nonisolated static let deepOffsetThreshold = 100_000
 
     // Results. `content` is what the grid shows (loaded rows with pending edits applied); `loadedContent`
     // is the page exactly as the server returned it.
@@ -226,6 +247,25 @@ final class TableDataModel {
         }
     }
 
+    /// The keyset order when this table/sort can page with seeks instead of OFFSET.
+    var keysetOrder: [SortKey]? {
+        guard fixedQuery == nil else { return nil }
+        return structure?.keysetOrder(for: sort)
+    }
+
+    /// The query for the page being shown: seeks from `pageCursor` when keyset paging applies.
+    func pageQuery() -> TableQuery {
+        var query = currentQuery()
+        guard let order = keysetOrder else { return query }
+        switch pageCursor {
+        case .first: query.keyset = KeysetPage(order: order)
+        case .after(let boundary): query.keyset = KeysetPage(order: order, direction: .forward, boundary: boundary)
+        case .before(let boundary, _): query.keyset = KeysetPage(order: order, direction: .backward, boundary: boundary)
+        case .last: query.keyset = KeysetPage(order: order, direction: .backward)
+        }
+        return query
+    }
+
     func currentQuery(offset: Int? = nil) -> TableQuery {
         TableQuery(
             table: table, filter: filters.isEmpty ? nil : filters, rawWhere: appliedWhere,
@@ -273,6 +313,7 @@ final class TableDataModel {
         let gen = generation
         loadTask?.cancel()
         countTask?.cancel()
+        isCountingExactly = false
         isLoading = true
         loadTask = Task { [weak self] in
             await self?.performLoad(generation: gen, session: session, preserveViewport: preserveViewport, restoreSelection: restoreSelection)
@@ -298,21 +339,24 @@ final class TableDataModel {
         guard gen == generation, !Task.isCancelled else { return }
 
         let dialect = SQLDialect(session.engine)
-        let query = currentQuery()
+        let query = pageQuery()
         let sql = fixedQuery?.sql ?? query.sql(dialect: dialect)
         lastSQL = sql
         do {
-            let result: QueryResult
+            let fetched: QueryResult
             if var fixed = fixedQuery, let seed = fixed.seed {
-                result = seed
+                fetched = seed
                 fixed.seed = nil
                 fixedQuery = fixed
             } else {
-                result = try await session.execute(sql)
+                fetched = try await session.execute(sql, interruptible: true)
             }
             guard gen == generation else { return }
+            var result = fetched
+            if query.keyset?.direction == .backward { result.rows.reverse() }
+            applyOffset(for: result.rows.count)
             loadedContent = GridContent(
-                columns: mergedColumns(result.columns), rows: result.rows, offset: query.offset, duration: result.duration,
+                columns: mergedColumns(result.columns), rows: result.rows, offset: offset, duration: result.duration,
                 preservesViewport: preserveViewport, selectionToRestore: preserveViewport ? restoreSelection : nil)
             prepareEditSession()
             if rebaseOnNextLoad {
@@ -324,11 +368,17 @@ final class TableDataModel {
             selectedRows = preserveViewport ? (restoreSelection ?? []).filter { $0 < (content?.rows.count ?? 0) } : []
             hasLoaded = true
             isLoading = false
+            committed = QueryState(sort: sort, filters: filters, appliedWhere: appliedWhere, offset: offset, cursor: pageCursor)
+            updateDeepPagingNotice()
             if fixedQuery != nil {
                 count = .exact(Int64(result.rows.count))
             } else {
                 startCount(generation: gen, session: session, dialect: dialect, query: query, rowsOnPage: result.rows.count)
             }
+        } catch is CancellationError {
+            guard gen == generation else { return }
+            isLoading = false
+            hasLoaded = true
         } catch {
             guard gen == generation else { return }
             failure = LoadFailure(message: SchemaBrowserModel.message(error), sql: sql)
@@ -355,38 +405,69 @@ final class TableDataModel {
     }
 
     /// Row count: exact when the page proves it, the server estimate for big unfiltered tables, otherwise
-    /// a `COUNT(*)` that arrives after the page ("…" until then).
+    /// a `COUNT(*)` that arrives after the page ("…" until then). Counts run on a second short-lived session
+    /// when the connection can open one, so a slow COUNT never delays the next page request.
     private func startCount(generation gen: Int, session: any DatabaseSession, dialect: SQLDialect, query: TableQuery, rowsOnPage: Int) {
         if rowsOnPage < pageSize {
-            count = .exact(Int64(query.offset + rowsOnPage))
-            countKey = nil
-            return
+            switch pageCursor {
+            case .first, .after, .last:
+                count = .exact(Int64(offset + rowsOnPage))
+                countKey = nil
+                return
+            case .before: break  // fewer rows only means the start was reached
+            }
         }
-        let sql = query.countSQL(dialect: dialect)
+        var countQuery = query
+        countQuery.keyset = nil
+        let sql = countQuery.countSQL(dialect: dialect)
         // Paging within the same result keeps the exact total we already have.
         if case .exact = count, countKey == sql { return }
         countKey = sql
         let estimate = structure?.info.estimatedRows
         if !isFiltered, let estimate {
             count = .estimate(estimate)
-            if estimate > Self.exactCountCeiling { return }  // COUNT(*) would stall the session; keep the estimate
+            if estimate > Self.exactCountCeiling { return }  // large: keep the estimate until "Count exactly"
         } else {
             count = .unknown
         }
+        runCount(sql: sql, generation: gen, session: session)
+    }
+
+    /// "Count exactly" in the footer: the `COUNT(*)` for tables above the automatic ceiling.
+    func countExactly() {
+        guard let session = sessionProvider(), let dialect else { return }
+        var query = currentQuery()
+        query.keyset = nil
+        let sql = query.countSQL(dialect: dialect)
+        countKey = sql
         countTask?.cancel()
+        runCount(sql: sql, generation: generation, session: session)
+    }
+
+    private func runCount(sql: String, generation gen: Int, session: any DatabaseSession) {
+        countTask?.cancel()
+        isCountingExactly = true
+        let opener = auxSessionOpener
         countTask = Task { [weak self] in
+            var aux: (any DatabaseSession)?
+            if let opener { aux = try? await opener() }
+            let runner = aux ?? session
+            var total: Int64?
             do {
-                let result = try await session.execute(sql)
-                guard let self, self.generation == gen, !Task.isCancelled else { return }
-                if let first = result.rows.first?.first, let n = Self.int(first) { self.count = .exact(n) }
+                let result = try await runner.execute(sql, interruptible: true)
+                if let first = result.rows.first?.first { total = Self.int(first) }
             } catch {
-                // A failed count only costs the footer its total.
+                // A failed or cancelled count only costs the footer its total.
             }
+            await aux?.close()
+            guard let self, self.generation == gen else { return }
+            self.isCountingExactly = false
+            if let total, !Task.isCancelled { self.count = .exact(total) }
         }
     }
 
-    /// Above this many (estimated) rows an unfiltered table is never counted exactly.
-    nonisolated static let exactCountCeiling: Int64 = 1_000_000
+    /// Above this many (estimated) rows an unfiltered table is only counted when asked ("Count exactly").
+    nonisolated static let exactCountCeiling: Int64 = 2_000_000
 
     nonisolated static func int(_ value: DatabaseValue) -> Int64? {
         switch value {
@@ -402,7 +483,7 @@ final class TableDataModel {
 
     func toggleSort(column: String, additive: Bool) {
         sort = SortCycle.next(current: sort, column: column, additive: additive)
-        offset = 0
+        resetPaging()
         reload()
     }
 
@@ -411,7 +492,7 @@ final class TableDataModel {
         guard trimmed != appliedWhere || failure != nil else { return }
         appliedWhere = trimmed
         appliedSavedID = nil
-        offset = 0
+        resetPaging()
         reload()
     }
 
@@ -451,7 +532,7 @@ final class TableDataModel {
 
     private func filtersChanged() {
         appliedSavedID = nil
-        offset = 0
+        resetPaging()
         reload()
     }
 
@@ -461,18 +542,146 @@ final class TableDataModel {
 
     // MARK: Paging
 
-    func nextPage() { goTo(offset: offset + pageSize) }
-    func previousPage() { goTo(offset: max(offset - pageSize, 0)) }
-    func firstPage() { goTo(offset: 0) }
+    func resetPaging() {
+        offset = 0
+        pageCursor = .first
+    }
 
+    /// Values of the keyset order columns in a loaded row, nil when a column isn't in the result.
+    private func boundary(of row: [DatabaseValue], order: [SortKey]) -> [DatabaseValue]? {
+        guard let columns = loadedContent?.columns else { return nil }
+        var values: [DatabaseValue] = []
+        for key in order {
+            guard let index = columns.firstIndex(where: { $0.name.caseInsensitiveCompare(key.column) == .orderedSame }),
+                  row.indices.contains(index), !row[index].isNull else { return nil }
+            values.append(row[index])
+        }
+        return values
+    }
+
+    func nextPage() {
+        if let order = keysetOrder, let last = loadedContent?.rows.last, let key = boundary(of: last, order: order) {
+            offset += loadedContent?.rows.count ?? pageSize
+            pageCursor = .after(key)
+            reload(keepCount: true)
+        } else {
+            goTo(offset: offset + pageSize)
+        }
+    }
+
+    func previousPage() {
+        if let order = keysetOrder, let first = loadedContent?.rows.first, let key = boundary(of: first, order: order) {
+            pageCursor = .before(key, fromOffset: offset)
+            offset = max(offset - pageSize, 0)
+            reload(keepCount: true)
+        } else {
+            goTo(offset: max(offset - pageSize, 0))
+        }
+    }
+
+    func firstPage() {
+        if keysetOrder != nil {
+            guard offset != 0 || pageCursor != .first else { return }
+            resetPaging()
+            reload(keepCount: true)
+        } else {
+            goTo(offset: 0)
+        }
+    }
+
+    /// With keyset paging the last page is the final `pageSize` rows read backwards from the end of the index;
+    /// otherwise an aligned OFFSET page.
     func lastPage() {
-        if let last = pageInfo.lastPageOffset { goTo(offset: last) }
+        guard pageInfo.lastPageOffset != nil else { return }
+        if keysetOrder != nil {
+            // The page's row numbers come from the total, so an estimate is replaced by an exact count first.
+            if case .exact = count {
+                pageCursor = .last
+                reload(keepCount: true)
+            } else {
+                Task { [weak self] in
+                    guard let self, let session = self.sessionProvider(), let dialect = self.dialect else { return }
+                    var query = self.currentQuery()
+                    query.keyset = nil
+                    let sql = query.countSQL(dialect: dialect)
+                    self.isCountingExactly = true
+                    var aux: (any DatabaseSession)?
+                    if let opener = self.auxSessionOpener { aux = try? await opener() }
+                    let result = try? await (aux ?? session).execute(sql, interruptible: true)
+                    await aux?.close()
+                    self.isCountingExactly = false
+                    if let first = result?.rows.first?.first, let n = Self.int(first) {
+                        self.count = .exact(n)
+                        self.countKey = sql
+                    }
+                    self.pageCursor = .last
+                    self.reload(keepCount: true)
+                }
+            }
+        } else if let last = pageInfo.lastPageOffset {
+            goTo(offset: last)
+        }
     }
 
     private func goTo(offset new: Int) {
         guard new != offset else { return }
         offset = new
+        pageCursor = .first
         reload(keepCount: true)
+    }
+
+    /// Settles `offset` once the rows of a keyset page are known (backward pages and the last page).
+    private func applyOffset(for rowCount: Int) {
+        switch pageCursor {
+        case .before(_, let from): offset = max(from - rowCount, 0)
+        case .last:
+            switch count {
+            case .exact(let n), .estimate(let n): offset = max(Int(n) - rowCount, 0)
+            case .unknown: offset = max(offset, 0)
+            }
+        case .first, .after: break
+        }
+    }
+
+    private func updateDeepPagingNotice() {
+        guard fixedQuery == nil, keysetOrder == nil, offset >= Self.deepOffsetThreshold else { deepPagingNotice = nil; return }
+        let why = (structure?.primaryKey.isEmpty ?? true) ? "this table has no primary key" : "the current sort isn't served by an index"
+        deepPagingNotice = "Deep page: \(why), so the server skips \(CompactCount.grouped(Int64(offset))) rows first. Sort by an indexed column or filter to jump faster."
+    }
+
+    // MARK: Stop
+
+    /// What the grid is showing, restored when a slow load is stopped.
+    struct QueryState {
+        var sort: [SortKey]
+        var filters: FilterGroup
+        var appliedWhere: String
+        var offset: Int
+        var cursor: PageCursor
+    }
+    @ObservationIgnored var committed: QueryState?
+
+    /// The Stop button on a running load: aborts the statement on the server (`KILL QUERY` / `pg_cancel_backend`),
+    /// ignores whatever arrives late and puts the sort / filters / page back to what the grid shows.
+    func stopLoading() {
+        guard isLoading else { return }
+        generation += 1
+        loadTask?.cancel()
+        countTask?.cancel()
+        isLoading = false
+        isCountingExactly = false
+        if let state = committed {
+            sort = state.sort
+            filters = state.filters
+            appliedWhere = state.appliedWhere
+            whereDraft = state.appliedWhere
+            offset = state.offset
+            pageCursor = state.cursor
+            reportNotice("Stopped. Showing the previous result.")
+        } else {
+            failure = LoadFailure(message: "Stopped.", sql: lastSQL)
+            hasLoaded = true
+        }
     }
 
     /// Page size changed in Settings: restart from the first page.
@@ -480,7 +689,7 @@ final class TableDataModel {
         guard size != pageSize else { return }
         pageSize = size
         if hasLoaded {
-            offset = 0
+            resetPaging()
             reload()
         }
     }
@@ -531,16 +740,29 @@ final class TableDataModel {
         let dataType = def?.dataType ?? columnInfo?.presentation.kind.fallbackTypeName ?? "text"
         let name = def?.name ?? columnInfo?.name ?? column
         let existing = filter(forColumn: name)
+        let estimate = structure?.info.estimatedRows
         let group = filters
         let raw = appliedWhere
         let table = table
         let editor = FilterEditorModel(
             columnName: name, dataType: dataType, existing: existing,
-            fetch: { search in
-                try await DistinctValuesQuery(
+            fetch: { [opener = auxSessionOpener] search in
+                let query = DistinctValuesQuery(
                     table: table, column: name, filter: group.isEmpty ? nil : group, rawWhere: raw,
-                    search: search, limit: 100
-                ).run(on: session)
+                    search: search, limit: 100)
+                // A dedicated session lets the server enforce a time limit (and fall back to a sample) without
+                // the limit leaking into other statements; without one the query runs unbounded.
+                if let aux = try await opener?() {
+                    do {
+                        let result = try await query.run(on: aux, policy: DistinctValuesPolicy(estimatedRows: estimate))
+                        await aux.close()
+                        return result
+                    } catch {
+                        await aux.close()
+                        throw error
+                    }
+                }
+                return try await query.run(on: session)
             })
         return editor
     }
@@ -560,7 +782,7 @@ final class TableDataModel {
         filters = saved.group
         appliedWhere = saved.rawWhere ?? ""
         whereDraft = appliedWhere
-        offset = 0
+        resetPaging()
         reload()
         appliedSavedID = saved.id  // after reload(): filtersChanged() would clear it
     }

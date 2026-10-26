@@ -141,6 +141,10 @@ struct TableTabView: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("Loading…").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    Button("Stop") { model.stopLoading() }
+                        .controlSize(.small)
+                        .help("Cancel the running query on the server and keep the current result")
+                        .accessibilityLabel("Stop loading")
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
@@ -253,8 +257,19 @@ struct TableTabView: View {
         return HStack(spacing: 16) {
             Text(info.label)
                 .help("The total comes from a COUNT(*); until it arrives (or for very large tables) the server's estimate is shown")
+            if case .estimate = model.count, !model.isCountingExactly {
+                Button("Count exactly") { model.countExactly() }
+                    .buttonStyle(.link).controlSize(.small)
+                    .help("Run COUNT(*) on a separate connection; large tables only show the server's estimate until you ask")
+            } else if model.isCountingExactly {
+                ProgressView().controlSize(.mini).accessibilityLabel("Counting rows")
+            }
             if let duration = model.content?.duration {
                 Text("Query \(LatencyFormatter.string(for: duration))")
+            }
+            if let notice = model.deepPagingNotice {
+                Label("Slow deep page", systemImage: "exclamationmark.triangle").labelStyle(.titleAndIcon)
+                    .foregroundStyle(Theme.warningText).help(notice)
             }
             if workspace.profile.isProduction {
                 Label("Writes need confirmation on PROD", systemImage: "lock.fill")

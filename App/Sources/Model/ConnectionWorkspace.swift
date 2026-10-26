@@ -522,6 +522,10 @@ final class ConnectionWorkspace: Identifiable {
         let model = TableDataModel(table: TableRef(schema: database, name: name))
         model.sessionProvider = { [weak self] in self?.live?.session }
         model.inspectorProvider = { [weak self] in self?.browser.inspector }
+        model.auxSessionOpener = { [weak self] in
+            guard let live = self?.live, live.canOpenAuxiliarySession else { return nil }
+            return try await live.openAuxiliarySession()
+        }
         model.savedFiltersStore = savedFiltersStore
         model.connectionID = profile.id
         model.openTable = { [weak self] ref, filter in self?.openTable(ref, filter: filter) }
