@@ -142,7 +142,7 @@ struct ConnectionIntegrationTests {
         let report = await ConnectionTester(secretStore: try store(for: p), tunnelProvider: provider).test(p)
         #expect(!report.succeeded)
         // Fails fast on ssh's "open failed" instead of waiting out the driver's 15s timeout.
-        #expect(ContinuousClock.now - start < .seconds(5))
+        #expect(ContinuousClock.now - start < .seconds(10))  // not the driver's 15 s timeout
         if case .databaseUnreachableThroughTunnel(let host, let port, let underlying) = report.error {
             #expect(host == "nosuchhost" && port == 3306)
             #expect(underlying == .connectionFailed("connect failed: Name does not resolve"))

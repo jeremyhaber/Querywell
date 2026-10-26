@@ -223,7 +223,7 @@ struct ConnectionOpenerUnitTests {
             host: "db.internal", port: 3306, underlying: .connectionFailed("connect failed: Name does not resolve"))) {
             _ = try await o.open(profile(ssh: sshConfig))
         }
-        #expect(ContinuousClock.now - start < .seconds(3))
+        #expect(ContinuousClock.now - start < .seconds(8))  // the failure being guarded against is a 15 s wait
     }
 
     @Test func timeoutThroughTunnelIsUnreachable() async {

@@ -65,9 +65,12 @@ fi
 if [ "$SKIP_XCODE" -eq 0 ]; then
   echo "==> xcodebuild build test"
   LOG="build/xcodebuild.log"
+  # shellcheck source=scripts/xcode-packages.sh
+  source scripts/xcode-packages.sh
+  xcode_resolve_packages build/DerivedData
   set +e
   xcodebuild -project Querywell.xcodeproj -scheme Querywell \
-    -destination 'platform=macOS' -derivedDataPath build/DerivedData \
+    -destination 'platform=macOS' -derivedDataPath build/DerivedData "${XCODE_PACKAGE_FLAGS[@]}" \
     LM_SKIP_METADATA_EXTRACTION=YES CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM= \
     build test > "$LOG" 2>&1
   RC=$?

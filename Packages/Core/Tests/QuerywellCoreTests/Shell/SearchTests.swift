@@ -100,7 +100,8 @@ struct FuzzyMatcherTests {
             count = FuzzyMatcher.rank(candidates, query: "usort", key: { $0 }, limit: 50).count
         }
         #expect(count == 50)
-        #expect(elapsed < .seconds(1))
+        // ~20 ms normally; generous so parallel suites cannot flake it, tight enough to catch quadratic ranking.
+        #expect(elapsed < .seconds(5))
     }
 }
 

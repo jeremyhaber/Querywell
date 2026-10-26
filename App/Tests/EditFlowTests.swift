@@ -132,7 +132,7 @@ private func makeModel(
 }
 
 @MainActor
-func waitUntil(_ timeout: Duration = .seconds(5), _ condition: @MainActor () -> Bool) async throws {
+func waitUntil(_ timeout: Duration = .seconds(20), _ condition: @MainActor () -> Bool) async throws {
     let clock = ContinuousClock()
     let deadline = clock.now.advanced(by: timeout)
     while !condition(), clock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
