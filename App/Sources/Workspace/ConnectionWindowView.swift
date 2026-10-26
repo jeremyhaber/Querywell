@@ -135,7 +135,8 @@ struct ConnectionWindowContent: View {
                 showSwitcher.toggle()
                 if showSwitcher { Task { await workspace.queryLibrary.refreshAllSaved() } }
             },
-            searchReplace: workspace.isConnected ? { workspace.presentSearchReplace() } : nil)
+            searchReplace: workspace.isConnected ? { workspace.presentSearchReplace() } : nil,
+            openHealth: workspace.isConnected ? { workspace.openHealth() } : nil)
     }
 
     // MARK: Body by state
@@ -486,6 +487,7 @@ struct ConnectionWindowContent: View {
             if let query = workspace.queryLibrary.allSaved.first(where: { $0.id == id }) { workspace.openSaved(query) }
         case .action(.newQuery): workspace.newQuery()
         case .action(.newConsole): workspace.openConsole()
+        case .action(.openHealth): workspace.openHealth()
         case .action(.openConnections): openWindow(id: "launcher")
         case .action(.settings): openSettings()
         }

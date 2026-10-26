@@ -22,6 +22,8 @@ struct WindowActions {
     var quickOpen: () -> Void
     /// Database ▸ Search & Replace… (⇧⌘H); nil while disconnected.
     var searchReplace: (() -> Void)?
+    /// Database ▸ Health & Doctor…; nil while disconnected.
+    var openHealth: (() -> Void)?
 }
 
 private struct WindowActionsKey: FocusedValueKey {

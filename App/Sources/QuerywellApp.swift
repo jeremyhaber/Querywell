@@ -139,6 +139,8 @@ struct AppCommands: Commands {
             Button("Search & Replace…") { actions?.searchReplace?() }
                 .keyboardShortcut("h", modifiers: [.command, .shift])
                 .disabled(actions?.searchReplace == nil)
+            Button("Health & Doctor…") { actions?.openHealth?() }
+                .disabled(actions?.openHealth == nil)
         }
 
         CommandMenu("Tab") {

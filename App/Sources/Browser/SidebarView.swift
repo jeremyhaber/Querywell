@@ -379,6 +379,9 @@ struct TabContentView: View {
         } else if case .terminal = tab.kind, let model = workspace.terminalModel(forTab: tab) {
             TerminalTabView(model: model, workspace: workspace)
                 .id(tab.id)
+        } else if case .health = tab.kind, let model = workspace.healthModel(forTab: tab) {
+            HealthTabView(model: model, workspace: workspace)
+                .id(tab.id)
         } else {
             placeholder(for: tab)
         }
@@ -390,6 +393,7 @@ struct TabContentView: View {
         case .query: ("chevron.left.forwardslash.chevron.right", "Query editor")
         case .console: ("terminal", "Console — Phase 7")
         case .terminal: ("apple.terminal", "Terminal — Phase 7")
+        case .health: ("heart.text.square", "Database health and doctor")
         }
         return VStack(spacing: 10) {
             Image(systemName: symbol)

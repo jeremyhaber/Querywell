@@ -4,6 +4,7 @@ import Foundation
 public enum QuickAction: String, Sendable, Hashable, CaseIterable {
     case newQuery
     case newConsole
+    case openHealth
     case openConnections
     case settings
 
@@ -12,6 +13,7 @@ public enum QuickAction: String, Sendable, Hashable, CaseIterable {
         switch self {
         case .newQuery: "New Query"
         case .newConsole: "New Console"
+        case .openHealth: "Database Health & Doctor"
         case .openConnections: "Open Connections"
         case .settings: "Settings"
         }

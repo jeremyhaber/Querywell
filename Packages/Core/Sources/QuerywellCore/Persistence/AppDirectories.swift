@@ -5,6 +5,7 @@ public enum AppDirectories {
     public static let connectionsFileName = "connections.json"
     public static let settingsFileName = "settings.json"
     public static let savedFiltersFileName = "saved-filters.json"
+    public static let healthFileName = "health.json"
 
     /// `~/Library/Application Support/<appName>`, created if needed.
     public static func applicationSupport(
