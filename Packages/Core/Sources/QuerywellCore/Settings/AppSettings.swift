@@ -13,6 +13,17 @@ public enum OpenConnectionBehaviour: String, Codable, Sendable, Hashable, CaseIt
     case newWindow
 }
 
+/// What choosing a database in the sidebar's database list does.
+public enum DatabaseSelectionBehaviour: String, Codable, Sendable, Hashable, CaseIterable {
+    /// Opens (or focuses) a window bound to that database; each window has its own connection.
+    case opensOwnWindow
+    /// Moves this window to the database (the earlier behaviour).
+    case switchesWindow
+
+    /// The other choice, used by ⌥-Return and the row context menu.
+    public var inverted: DatabaseSelectionBehaviour { self == .opensOwnWindow ? .switchesWindow : .opensOwnWindow }
+}
+
 /// User preferences, persisted as `settings.json`. Decoding is tolerant: missing sections,
 /// missing fields and unknown enum values all fall back to defaults.
 public struct AppSettings: Codable, Sendable, Equatable {
@@ -52,15 +63,18 @@ public struct AppSettings: Codable, Sendable, Equatable {
         public var reopenLastSession: Bool
         public var openConnectionBehaviour: OpenConnectionBehaviour
         public var confirmBeforeClosingConnectionWindow: Bool
+        public var databaseSelectionBehaviour: DatabaseSelectionBehaviour
 
         public init(
             reopenLastSession: Bool = true,
             openConnectionBehaviour: OpenConnectionBehaviour = .focusExisting,
-            confirmBeforeClosingConnectionWindow: Bool = true
+            confirmBeforeClosingConnectionWindow: Bool = true,
+            databaseSelectionBehaviour: DatabaseSelectionBehaviour = .opensOwnWindow
         ) {
             self.reopenLastSession = reopenLastSession
             self.openConnectionBehaviour = openConnectionBehaviour
             self.confirmBeforeClosingConnectionWindow = confirmBeforeClosingConnectionWindow
+            self.databaseSelectionBehaviour = databaseSelectionBehaviour
         }
 
         public init(from decoder: any Decoder) throws {
@@ -70,6 +84,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
             openConnectionBehaviour = c.value(.openConnectionBehaviour, d.openConnectionBehaviour)
             confirmBeforeClosingConnectionWindow = c.value(
                 .confirmBeforeClosingConnectionWindow, d.confirmBeforeClosingConnectionWindow)
+            databaseSelectionBehaviour = c.value(.databaseSelectionBehaviour, d.databaseSelectionBehaviour)
         }
     }
 

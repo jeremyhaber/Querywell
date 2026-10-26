@@ -204,6 +204,49 @@ struct AppModelTests {
         #expect(await f.model.connect(profileID: UUID()) == nil)
     }
 
+    @Test("connect(database:): one window per profile and database; asking again focuses it")
+    func connectPerDatabase() async throws {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        await f.model.load()
+        #expect(await f.model.save(f.validDraft()))
+        let profileID = try #require(f.model.library.profiles.first?.id)
+
+        let shop = try #require(await f.model.connect(profileID: profileID, database: "shop"))
+        #expect(f.model.workspaces[shop]?.boundDatabase == "shop")
+        #expect(f.model.workspaces[shop]?.title == "web01 · shop")
+        #expect(await f.model.connect(profileID: profileID, database: "shop") == nil)
+        let blog = try #require(await f.model.connect(profileID: profileID, database: "blog"))
+        #expect(blog != shop && f.model.workspaces.count == 2)
+        #expect(f.model.workspace(profileID: profileID, database: "blog")?.id == blog)
+
+        let shopWorkspace = try #require(f.model.workspaces[shop])
+        #expect(f.model.isDatabaseOpenElsewhere("blog", besides: shopWorkspace))
+        #expect(!f.model.isDatabaseOpenElsewhere("shop", besides: shopWorkspace))
+
+        // Closing the window tears the workspace down, so the database can be opened again.
+        await f.model.closeWorkspace(id: shop)
+        #expect(f.model.workspace(profileID: profileID, database: "shop") == nil)
+        #expect(await f.model.connect(profileID: profileID, database: "shop") != nil)
+        await f.model.closeAllWorkspaces()
+    }
+
+    @Test("a window can't drop the database it uses, nor read-only connections drop anything")
+    func dropGuards() async throws {
+        let f = Fixture()
+        defer { f.cleanUp() }
+        await f.model.load()
+        #expect(await f.model.save(f.validDraft()))
+        let profileID = try #require(f.model.library.profiles.first?.id)
+        let id = try #require(await f.model.connect(profileID: profileID, database: "shop"))
+        let workspace = try #require(f.model.workspaces[id])
+        #expect(workspace.dropBlockedReason(for: "shop", boundElsewhere: false) != nil)
+        #expect(workspace.dropBlockedReason(for: "blog", boundElsewhere: true) != nil)
+        #expect(workspace.dropBlockedReason(for: "mysql", boundElsewhere: false) != nil)
+        #expect(workspace.dropBlockedReason(for: "blog", boundElsewhere: false) == nil)
+        await f.model.closeAllWorkspaces()
+    }
+
     @Test("closing a workspace removes it")
     func closeWorkspace() async throws {
         let f = Fixture()

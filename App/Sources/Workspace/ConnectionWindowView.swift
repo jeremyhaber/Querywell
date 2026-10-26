@@ -311,12 +311,12 @@ struct ConnectionWindowContent: View {
                 } else if let tag = profile.colorTag {
                     ColorTagSwatch(tag: tag)
                 }
-                Text(profile.name)
+                Text(workspace.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .truncationMode(.tail)
-                    .frame(maxWidth: 240, alignment: .leading)
-                    .fixedSize(horizontal: profile.name.count <= 28, vertical: false)
+                    .frame(maxWidth: 300, alignment: .leading)
+                    .fixedSize(horizontal: workspace.title.count <= 34, vertical: false)
                 if showsEngineLabel {
                     Text(headerSubtitle)
                         .font(.system(size: 12))
@@ -334,7 +334,7 @@ struct ConnectionWindowContent: View {
         .buttonStyle(.plain)
         .help("Connection actions")
         .accessibilityLabel(
-            "\(profile.name), \(profile.isProduction ? "production connection, " : "")\(workspace.summary.engineLabel). Connection menu")
+            "\(workspace.title.replacingOccurrences(of: " · ", with: ", database ")), \(profile.isProduction ? "production connection, " : "")\(workspace.summary.engineLabel). Connection menu")
         .popover(isPresented: $showConnectionPopover, arrowEdge: .bottom) { connectionPopover }
     }
 
@@ -457,7 +457,7 @@ struct ConnectionWindowContent: View {
             "Endpoint: \(workspace.summary.endpointLabel)",
             "User: \(profile.user)",
         ]
-        if let db = profile.defaultDatabase { lines.append("Database: \(db)") }
+        if let db = workspace.boundDatabase ?? profile.defaultDatabase { lines.append("Database: \(db)") }
         if let ssh = profile.ssh { lines.append("SSH: \(ssh.user)@\(ssh.host):\(ssh.port)") }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)

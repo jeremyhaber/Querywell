@@ -332,17 +332,73 @@ final class AppModel {
             existing.bringToFront()
             return nil
         }
-        let workspace = ConnectionWorkspace(profile: profile, opener: opener, queryServices: queryServices)
+        return await makeWorkspace(profile: profile, database: nil)
+    }
+
+    /// Opens a window for `database` of the profile, or focuses the one that already shows it
+    /// (then returns `nil`). Each such window owns its own live connection.
+    func connect(profileID: UUID, database: String) async -> UUID? {
+        guard let profile = profile(id: profileID) else { return nil }
+        if let existing = workspace(profileID: profileID, database: database) {
+            existing.bringToFront()
+            return nil
+        }
+        return await makeWorkspace(profile: profile, database: database)
+    }
+
+    /// The open window of `profileID` bound to `database`, if any.
+    func workspace(profileID: UUID, database: String) -> ConnectionWorkspace? {
+        workspaces.values
+            .filter { $0.profile.id == profileID && $0.boundDatabase == database && !$0.isClosed }
+            .min { $0.openedAt < $1.openedAt }
+    }
+
+    private func makeWorkspace(profile: ConnectionProfile, database: String?) async -> UUID {
+        let workspace = ConnectionWorkspace(
+            profile: profile, opener: opener, queryServices: queryServices, boundDatabase: database)
         workspace.tools.secretStore = secretStore
         workspace.savedFiltersStore = savedFiltersStore
         workspaces[workspace.id] = workspace
         do {
-            try await repository.markUsed(id: profileID)
+            try await repository.markUsed(id: profile.id)
             try await refreshLibrary()
         } catch {
             // Not being able to record "last used" must not stop the user connecting.
         }
         return workspace.id
+    }
+
+    /// A database was chosen in `workspace`'s database list. `behaviour` is what to do (the setting,
+    /// or its opposite for ⌥-Return and the context menu): open / focus that database's own window,
+    /// or move `workspace` there. Returns a message when the switch was refused.
+    @discardableResult
+    func chooseDatabase(
+        _ name: String, in workspace: ConnectionWorkspace, behaviour: DatabaseSelectionBehaviour,
+        using openWindow: OpenWindowAction
+    ) async -> String? {
+        if name == workspace.boundDatabase { return nil }
+        switch behaviour {
+        case .opensOwnWindow:
+            if let id = await connect(profileID: workspace.profile.id, database: name) {
+                openWindow(id: "connection", value: id)
+            }
+            return nil
+        case .switchesWindow:
+            // Another window may already show it; switching would then duplicate it.
+            if let existing = self.workspace(profileID: workspace.profile.id, database: name) {
+                existing.bringToFront()
+                return nil
+            }
+            if case .refused(let reason) = await workspace.switchDatabase(to: name) { return reason }
+            return nil
+        }
+    }
+
+    /// True when a window other than `workspace` of the same connection is bound to `name`.
+    func isDatabaseOpenElsewhere(_ name: String, besides workspace: ConnectionWorkspace) -> Bool {
+        workspaces.values.contains {
+            $0.id != workspace.id && $0.profile.id == workspace.profile.id && $0.boundDatabase == name && !$0.isClosed
+        }
     }
 
     /// Convenience for views: connect and open the resulting window.

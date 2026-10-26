@@ -23,6 +23,10 @@ final class ConnectionWorkspace: Identifiable {
     var tabs = WorkspaceTabs()
     private(set) var databases: [String] = []
     var selectedDatabase: String?
+    /// The database this window is about: the one it connected to (Postgres) or browses (MySQL /
+    /// MariaDB). Chosen at creation or, for a plain connect, once the first database is picked.
+    /// It survives Disconnect / Reconnect and names the window ("connection · database").
+    private(set) var boundDatabase: String?
     /// Sidebar state: schemas, cached table lists, filter and multi-selection.
     let browser = SchemaBrowserModel()
     /// Bumped on every successful (re)connect; table tabs reload when it changes.
@@ -57,8 +61,9 @@ final class ConnectionWorkspace: Identifiable {
     let queryLibrary: QueryLibraryModel
 
     init(profile: ConnectionProfile, opener: ConnectionOpener, keepaliveInterval: Duration = .seconds(60),
-         queryServices: QueryServices? = nil) {
+         queryServices: QueryServices? = nil, boundDatabase: String? = nil) {
         self.profile = profile
+        self.boundDatabase = boundDatabase
         self.opener = opener
         self.keepaliveInterval = keepaliveInterval
         let services = queryServices ?? QueryServices()
@@ -94,8 +99,8 @@ final class ConnectionWorkspace: Identifiable {
 
     var summary: ConnectionSummary { ConnectionSummary(profile: profile, serverInfo: serverInfo) }
 
-    /// Window title text: name and, once connected, nothing else (the toolbar shows the rest).
-    var title: String { profile.name }
+    /// Window title text: "connection · database" once the database is known.
+    var title: String { DatabaseWindowTitle.make(connection: profile.name, database: boundDatabase) }
 
     // MARK: Lifecycle
 
@@ -120,7 +125,7 @@ final class ConnectionWorkspace: Identifiable {
         hasStarted = true
         state = .connecting(.validating)
         do {
-            let live = try await opener.open(profile) { [weak self] stage in
+            let live = try await opener.open(profile, database: boundDatabase) { [weak self] stage in
                 Task { @MainActor in self?.report(stage) }
             }
             guard !isClosed else {
@@ -236,11 +241,52 @@ final class ConnectionWorkspace: Identifiable {
             guard self.live === live else { return }
             databases = names
             let current = (try? await live.session.currentDatabase()) ?? nil
-            selectedDatabase = DatabaseSelection.preferred(
-                among: names, defaultDatabase: profile.defaultDatabase, current: current, engine: profile.engine)
+            if let bound = boundDatabase, names.contains(bound) {
+                selectedDatabase = bound
+            } else if profile.engine == .postgresql, let current, names.contains(current) {
+                selectedDatabase = current  // a Postgres connection is to exactly one database
+            } else {
+                selectedDatabase = DatabaseSelection.preferred(
+                    among: names, defaultDatabase: profile.defaultDatabase, current: current, engine: profile.engine)
+            }
+            boundDatabase = selectedDatabase ?? boundDatabase
         } catch {
             databases = []
         }
+    }
+
+    // MARK: Databases
+
+    /// Re-reads the server's database list (after a create or drop).
+    func refreshDatabases() async {
+        guard let live else { return }
+        if let names = try? await live.session.listDatabases(), self.live === live { databases = names }
+    }
+
+    enum SwitchOutcome: Equatable {
+        case switched
+        /// Nothing happened; the reason is meant for the user.
+        case refused(String)
+    }
+
+    /// "Switches this window" mode: MySQL / MariaDB move the sidebar (tabs stay); PostgreSQL has to
+    /// reconnect to the other database, which closes table tabs (they belong to the old database).
+    func switchDatabase(to name: String) async -> SwitchOutcome {
+        guard isConnected, databases.contains(name) else { return .refused("That database isn't available.") }
+        if name == boundDatabase { return .switched }
+        if profile.engine != .postgresql {
+            boundDatabase = name
+            selectedDatabase = name
+            browser.selectedSchema = name
+            return .switched
+        }
+        if let unsaved = unsavedEditsDescription {
+            return .refused("\(unsaved.prefix(1).uppercased() + unsaved.dropFirst()). Review or discard them before switching database.")
+        }
+        for tab in tabs.tabs { if case .table = tab.kind { tabs.close(id: tab.id) } }
+        boundDatabase = name
+        await reconnect()
+        return .switched
     }
 
     // MARK: Tabs

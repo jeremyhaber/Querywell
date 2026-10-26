@@ -49,6 +49,12 @@ private struct GeneralSettings: View {
                 }
                 Text("Hold ⌥ while clicking Connect to open a second window either way.")
                     .font(.caption).foregroundStyle(Theme.textSecondary)
+                Picker("Selecting a database", selection: model.binding(\.general.databaseSelectionBehaviour)) {
+                    Text("Opens its own window").tag(DatabaseSelectionBehaviour.opensOwnWindow)
+                    Text("Switches this window").tag(DatabaseSelectionBehaviour.switchesWindow)
+                }
+                Text("In a window's database list, ⌥-Return or a right-click does the other one. Each database window has its own connection.")
+                    .font(.caption).foregroundStyle(Theme.textSecondary)
                 Toggle(
                     "Confirm before closing a connected window",
                     isOn: model.binding(\.general.confirmBeforeClosingConnectionWindow))
