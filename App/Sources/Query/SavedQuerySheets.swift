@@ -105,10 +105,8 @@ struct SnippetForm: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 CaptionLabel("SQL")
-                TextEditor(text: $sql)
-                    .font(.system(size: 12, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .frame(height: 120).padding(4)
+                PlaceholderTextEditor(text: $sql, font: .monospacedSystemFont(ofSize: 12, weight: .regular))
+                    .frame(height: 120)
                     .accessibilityLabel("SQL")
                     .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
                     .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.separator))

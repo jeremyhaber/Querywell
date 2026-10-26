@@ -215,11 +215,8 @@ struct InspectorField: View {
         if info.usesPicker {
             picker(info)
         } else if isMultiline || info.prefersInspector {
-            TextEditor(text: $draft)
-                .font(.system(size: 12, design: .monospaced))
-                .scrollContentBackground(.hidden)
+            PlaceholderTextEditor(text: $draft, font: .monospacedSystemFont(ofSize: 12, weight: .regular))
                 .frame(height: 130)
-                .padding(4)
                 .modifier(FieldChrome(isEdited: isEdited, isFocused: isFocused || fieldFocused, hasError: error != nil))
                 .focused($fieldFocused)
                 .onChange(of: fieldFocused) { _, focused in if !focused { commit() } }

@@ -198,25 +198,14 @@ struct AIAssistantPanel: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $model.prompt)
-                    .font(.system(size: 12))
-                    .scrollContentBackground(.hidden)
-                    .focused($promptFocused)
-                    .frame(height: 44)
-                    .padding(4)
-                    .onKeyPress(.return, phases: .down) { press in
-                        guard press.modifiers.contains(.command) else { return .ignored }
-                        model.generate()
-                        return .handled
-                    }
-                    .accessibilityLabel("Ask the assistant")
-                if model.prompt.isEmpty {
-                    Text("Describe the query you need…")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
-                        .padding(.horizontal, 9).padding(.vertical, 12).allowsHitTesting(false)
-                }
-            }
+            PlaceholderTextEditor(
+                text: $model.prompt,
+                placeholder: "Describe the query you need…",
+                isFocused: Binding(get: { promptFocused }, set: { promptFocused = $0 }),
+                onCommandReturn: { model.generate() }
+            )
+            .frame(height: 44)
+            .accessibilityLabel("Ask the assistant")
             .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
             .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(promptFocused ? Theme.accent : Theme.separator))
 
