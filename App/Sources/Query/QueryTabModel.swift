@@ -434,8 +434,71 @@ final class QueryTabModel {
         return l
     }
 
-    /// Drops the cached catalog (schema refresh, reconnect).
-    func invalidateCatalog() { completionLoader = nil }
+    /// Drops the cached catalog (schema refresh, reconnect). The schema sidebar reloads when `catalogVersion` changes.
+    func invalidateCatalog() {
+        completionLoader = nil
+        knownTables = []
+        tablesLoaded = false
+        catalogVersion += 1
+    }
+
+    // MARK: Schema (sidebar) and quick queries
+
+    /// Bumped by `invalidateCatalog()`: anything showing catalog data reloads.
+    private(set) var catalogVersion = 0
+    /// Tables of the current database, from the same catalog the autocomplete uses.
+    private(set) var knownTables: [TableInfo] = []
+    private(set) var tablesLoaded = false
+    /// A table chosen in the Quick queries menu; nil = the table named at the caret.
+    var quickTable: TableRef?
+
+    /// Loads the table list of the current database into `knownTables` (a no-op when already there).
+    func refreshTables() async {
+        guard let schema = schemaProvider(), let l = await loader() else { return }
+        try? await l.loadTables(in: schema)
+        let tables = await l.catalog.tables(in: schema)
+        guard schemaProvider() == schema else { return }
+        knownTables = tables
+        tablesLoaded = true
+    }
+
+    /// Columns, keys and indexes of `ref`, loaded lazily (and so available to autocomplete afterwards).
+    func structure(of ref: TableRef) async -> TableStructure? {
+        guard let l = await loader() else { return nil }
+        return await l.structure(of: ref)
+    }
+
+    /// The table quick queries act on: the one chosen in the menu, else the one named at the caret.
+    func quickQueryTable() -> TableRef? {
+        quickTable ?? QuickQueryTableFinder.table(in: text, caret: selection.location, tables: knownTables, dialect: dialect)
+    }
+
+    /// Inserts a quick query into the editor (at the caret, as a snippet whose first placeholder is selected).
+    /// It is only inserted: running it goes through `run`, the guard and the confirmation like any typed SQL.
+    func insertQuickQuery(_ kind: QuickQueryKind, table explicit: TableRef? = nil) async {
+        var context = QuickQueryContext(dialect: dialect, currentSchema: schemaProvider())
+        if kind.needsTable {
+            await refreshTables()
+            guard let ref = explicit ?? quickQueryTable() else {
+                show(toast: "Click a table name in the editor, or choose a table in the Quick queries menu.", isError: false)
+                return
+            }
+            context.table = ref
+            context.structure = await structure(of: ref)
+        }
+        guard let template = QuickQueries.template(kind, context) else {
+            show(toast: "Choose a database first.", isError: false)
+            return
+        }
+        insertSnippet(QuickQueries.separated(template, editorText: text, caret: selection.location, selectionLength: selection.length))
+        editor.focus()
+    }
+
+    /// Inserts a quoted identifier at the caret (schema sidebar double-click).
+    func insertIdentifier(_ name: String) {
+        insertIntoEditor(dialect.quoteIdentifier(name))
+        editor.focus()
+    }
 
     func complete(text: String, caret: Int) async -> CompletionResult? {
         guard let l = await loader() else { return nil }

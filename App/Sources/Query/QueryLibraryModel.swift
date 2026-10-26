@@ -44,19 +44,21 @@ enum HistoryRowFormat {
 @MainActor @Observable
 final class QueryLibraryModel {
     enum Segment: String, CaseIterable, Identifiable {
-        case history = "History", saved = "Saved", snippets = "Snippets"
+        case schema = "Schema", history = "History", saved = "Saved", snippets = "Snippets"
         var id: String { rawValue }
     }
 
     let connectionID: UUID
     @ObservationIgnored let services: QueryServices
 
-    var segment: Segment = .history { didSet { if segment != oldValue { Task { await reload() } } } }
+    var segment: Segment = .schema { didSet { if segment != oldValue { Task { await reload() } } } }
     var search = "" { didSet { if search != oldValue { scheduleReload() } } }
 
     private(set) var history: [HistoryEntry] = []
     private(set) var saved: [SavedQuery] = []
     private(set) var snippets: [Snippet] = []
+    /// Every snippet visible to this connection (for the Quick queries menu), whatever the search says.
+    private(set) var allSnippets: [Snippet] = []
     /// Every saved query visible to this connection (for the ⌘K switcher), whatever the search says.
     private(set) var allSaved: [SavedQuery] = []
     var savedSheet: SavedQueryDetailsRequest?
@@ -88,6 +90,7 @@ final class QueryLibraryModel {
 
     func refreshAllSaved() async {
         allSaved = (try? await services.savedQueries.list(for: connectionID)) ?? []
+        allSnippets = (try? await services.snippets.list(for: connectionID)) ?? []
     }
 
     func reload() async {
@@ -95,6 +98,8 @@ final class QueryLibraryModel {
         let q = search.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             switch segment {
+            case .schema:
+                break  // the schema list reads the editor's catalog, not the stores
             case .history:
                 history = try await historyStore.search(q, limit: 200)
             case .saved:

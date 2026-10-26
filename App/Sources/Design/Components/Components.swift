@@ -91,7 +91,7 @@ struct CaptionLabel: View {
 }
 
 /// Accent-filled primary button drawn by us (not system glass), so it reads the same in
-/// active/inactive windows and popovers on macOS 26. Dimmed when disabled.
+/// active/inactive windows and popovers on macOS 26. Solid grey when disabled.
 struct AccentFillButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     /// Fill colour; the accent unless a caller needs a variant (destructive confirmations use red).
@@ -100,12 +100,16 @@ struct AccentFillButtonStyle: ButtonStyle {
     init(tint: Color? = nil) { self.tint = tint }
 
     func makeBody(configuration: Configuration) -> some View {
+        // Disabled is a solid neutral fill, not a faded accent: nothing behind the button shows through.
         configuration.label
-            .foregroundStyle(.white)
+            .foregroundStyle(isEnabled ? Color.white : Theme.textTertiary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(tint ?? Theme.accent, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
-            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
+            .background(isEnabled ? (tint ?? Theme.accent) : Theme.chipBackground, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+            .overlay {
+                if !isEnabled { RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.separator) }
+            }
+            .opacity(isEnabled && configuration.isPressed ? 0.8 : 1)
             .contentShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
     }
 }
