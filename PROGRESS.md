@@ -139,3 +139,14 @@ Per-table Structure / Data (default both) without checkbox fatigue: rows grouped
 - **Reduce Motion:** `Motion` helpers applied to every `withAnimation` / `.animation`.
 - **Left:** the grid's funnel button is still pointer-only (⌥⌘F opens it from the keyboard); Increase Contrast was verified by test switch, not on a Mac with the setting on; no VoiceOver listening pass.
 - Decided: #66-72.
+
+## Post-v1 feedback round 1 (2026-10-26)
+
+- **Tabs:** horizontal overflow (scroll, page chevrons, position bar, "All tabs" menu); preview tab for single clicks (⌘-click / "Open in New Tab" for a new one; duplicates of one table allowed; Settings ▸ General ▸ "Clicking a table"); tab context menu (Color, Duplicate, Keep, Close, Close Others, Close to the Right); connection tag band + tab-strip tint on every tagged window; equal-size footer +/- buttons. (#73, #74)
+- **Databases:** fuzzy-filtered database popover; one window per database with its own connection, or switch in place (setting); New Database… (charset/collation, Postgres owner/encoding/template) and Drop Database…, guarded. (#75, #76)
+- **Table tab:** Operations mode (rename/move, comment, engine, collation, AUTO_INCREMENT, row format, copy, analyze/check/checksum/optimize/flush/repair, Postgres ANALYZE/VACUUM/REINDEX, empty/drop) and Triggers mode (list, definition, create, edit, drop). (#77)
+- **Health & Doctor tab:** health metrics, baseline recommendations with apply (SET PERSIST / SET GLOBAL / ALTER SYSTEM), ignore, server-RAM input, revision history with revert and drift. (#78)
+- **Query tab:** opaque toolbar and solid disabled buttons; Quick queries menu; Schema segment (tables → columns) in the query sidebar. (#79)
+- **Inputs:** `PlaceholderTextEditor` fixes the assistant composer caret offset. (#80)
+- **Verified:** `scripts/ci.sh --skip-integration` PASS (Core 1171+ tests, app 191). Integration tests for table operations, triggers and health collectors were run against MySQL 8.4, MariaDB 11.4 and Postgres 16 by the agents that wrote them.
+- **Left:** Docker snapshot suites not re-run; bulk tab close prompts only for the first dirty tab; Postgres in-place database switch closes table tabs without asking; a window still connecting can be duplicated by choosing its database; Postgres table copy shares the serial sequence; MySQL data copy fails with generated columns; no real-server test creates/drops a database.
