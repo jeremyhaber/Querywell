@@ -25,7 +25,7 @@ struct TableQueryTests {
     @Test func primaryKeyBecomesTiebreaker() {
         let q = TableQuery(
             table: posts, sort: [SortKey(column: "post_date", ascending: false)], limit: 10, primaryKey: ["ID"])
-        #expect(q.sql(dialect: my) == "SELECT * FROM `wp`.`wp_posts` ORDER BY `post_date` DESC, `ID` ASC LIMIT 10")
+        #expect(q.sql(dialect: my) == "SELECT * FROM `wp`.`wp_posts` ORDER BY `post_date` DESC, `ID` DESC LIMIT 10")
     }
 
     @Test func unsortedPagingStillOrdersByPrimaryKey() {
@@ -40,6 +40,8 @@ struct TableQueryTests {
             limit: 5, primaryKey: ["a", "B"])
         // `B` (duplicate sort key) and PK column `B` are already covered by the first key.
         #expect(q.sql(dialect: my) == "SELECT * FROM `wp`.`wp_posts` ORDER BY `b` DESC, `x` ASC, `a` ASC LIMIT 5")
+        let desc = TableQuery(table: posts, sort: [SortKey(column: "x", ascending: false)], limit: 5, primaryKey: ["a"])
+        #expect(desc.sql(dialect: my).hasSuffix("ORDER BY `x` DESC, `a` DESC LIMIT 5"))
     }
 
     @Test func noPrimaryKeyNoTiebreaker() {

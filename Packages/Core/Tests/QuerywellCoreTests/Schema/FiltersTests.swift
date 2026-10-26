@@ -385,7 +385,8 @@ struct FilterIntegrationTests {
                 seen += result.rows.compactMap { Record.int(from: $0[0]) }
             }
             #expect(seen.count == 30 && Set(seen).count == 30)
-            #expect(Array(seen.prefix(10)) == [2, 5, 8, 11, 14, 17, 20, 23, 26, 29])
+            // The primary-key tiebreak follows the sort direction (DESC, DESC) so an index can serve the whole order.
+            #expect(Array(seen.prefix(10)) == [29, 26, 23, 20, 17, 14, 11, 8, 5, 2])
         }
     }
 

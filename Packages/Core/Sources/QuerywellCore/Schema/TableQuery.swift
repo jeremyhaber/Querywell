@@ -27,11 +27,15 @@ public struct TableQuery: Hashable, Sendable {
     /// Primary-key columns in key order. Appended to the ORDER BY (after the user's sort keys) so paging
     /// is deterministic; leave empty for tables without a primary key.
     public var primaryKey: [String]
+    /// Seek paging (see ``KeysetPage``). When set, `sort`, `primaryKey` and `offset` are ignored: the page's
+    /// own `order` defines `ORDER BY`, and the boundary replaces `OFFSET`.
+    public var keyset: KeysetPage?
 
     public init(
         table: TableRef, columns: [String]? = nil, filter: FilterGroup? = nil, rawWhere: String? = nil,
-        sort: [SortKey] = [], limit: Int = 1000, offset: Int = 0, primaryKey: [String] = []
+        sort: [SortKey] = [], limit: Int = 1000, offset: Int = 0, primaryKey: [String] = [], keyset: KeysetPage? = nil
     ) {
+        self.keyset = keyset
         self.table = table
         self.columns = columns
         self.filter = filter
@@ -51,10 +55,12 @@ public struct TableQuery: Hashable, Sendable {
             select = "*"
         }
         var out = "SELECT \(select) FROM \(dialect.qualified(table))"
-        if let condition = whereSQL(dialect: dialect) { out += " WHERE \(condition)" }
-        let order = orderBy(dialect: dialect)
+        var conditions = whereSQL(dialect: dialect).map { [$0] } ?? []
+        if let seek = keyset?.condition(dialect: dialect) { conditions.append(seek) }
+        if !conditions.isEmpty { out += " WHERE " + conditions.joined(separator: " AND ") }
+        let order = keyset?.orderTerms(dialect: dialect) ?? orderBy(dialect: dialect)
         if !order.isEmpty { out += " ORDER BY \(order.joined(separator: ", "))" }
-        out += dialect.limitClause(limit: max(limit, 0), offset: max(offset, 0))
+        out += dialect.limitClause(limit: max(limit, 0), offset: keyset == nil ? max(offset, 0) : 0)
         return out
     }
 
@@ -82,8 +88,11 @@ public struct TableQuery: Hashable, Sendable {
         for key in sort where seen.insert(key.column.lowercased()).inserted {
             out.append(dialect.quoteIdentifier(key.column) + (key.ascending ? " ASC" : " DESC"))
         }
+        // The tiebreak follows the last sort key's direction so an index on the sort column (which carries
+        // the primary key) can serve the whole ORDER BY instead of forcing a filesort.
+        let tiebreak = (sort.last?.ascending ?? true) ? " ASC" : " DESC"
         for column in primaryKey where seen.insert(column.lowercased()).inserted {
-            out.append(dialect.quoteIdentifier(column) + " ASC")
+            out.append(dialect.quoteIdentifier(column) + tiebreak)
         }
         return out
     }
