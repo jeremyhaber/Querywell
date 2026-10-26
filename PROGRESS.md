@@ -44,6 +44,16 @@
 
 **Next — Phase 4 (Table browser):** schema introspection, data grid, structure/indexes/relations, filters + chips, inline edit with review/commit, row inspector, PROD write guard, batch engine/collation changes.
 
+## Phase 4 — Table browser ✅ (2026-10-26)
+
+**Built**
+- Core: MySQL/MariaDB + Postgres schema inspectors (tables/views/routines, columns, indexes, FKs in/out, CREATE, collations, engines), `SQLDialect` quoting choke point (MySQL sessions strip NO_BACKSLASH_ESCAPES), `TableQuery` paging/sort/filters, filter model + saved filters, distinct-value counts, WHERE autocomplete, SQL lexer/splitter/classifier, `WriteGuard` (+ dry-run counts, `WriteOrigin.gridEdit`), `EditSession` (transactional commit with optimistic concurrency), `TableMaintenancePlanner`/`MaintenanceRunner`, cell value parser, edit review model.
+- App: schema sidebar (DB picker, fuzzy table filter, row estimates, views/routines, multi-select), virtualized NSTableView grid (type headers, PK/FK markers, FK navigation, copy as TSV/CSV/JSON/INSERT, paging with exact/estimated counts), Structure/Indexes/Relations views, funnel popover + chips + saved filters + Show as SQL, row inspector, inline editing (edited/deleted/inserted styling, amber Review pill, Review sheet with exact SQL, conflict handling + rebase), shared `WriteGate` + `WriteConfirmationSheet` (dry-run impact, typed DB name on PROD), Truncate/Drop, batch storage-engine / charset+collation sheet with per-table progress.
+
+**Status:** CI PASS, 0 warnings; Core 944+ tests; snapshot suite incl. Docker end-to-end edit/commit/conflict.
+
+**Decided:** #29–33.
+
 ## Scope additions (requested by Jeremy, 2026-10-26)
 
 ### A. Collation / charset compatibility on export (and import) — Phase 7
