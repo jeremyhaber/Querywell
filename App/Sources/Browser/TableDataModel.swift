@@ -96,6 +96,7 @@ struct FilterRequest: Equatable, Identifiable {
 
 enum TableViewMode: String, CaseIterable, Identifiable {
     case data = "Data", structure = "Structure", indexes = "Indexes", relations = "Relations"
+    case operations = "Operations", triggers = "Triggers"
     var id: String { rawValue }
 }
 
@@ -115,7 +116,8 @@ final class TableDataModel {
         case exact(Int64)
     }
 
-    let table: TableRef
+    /// The table this tab shows; changes only through ``retarget(to:)`` (rename / move in Operations).
+    private(set) var table: TableRef
 
     /// A query result (query editor) edited in place instead of a paged table: the SQL is re-run on
     /// reload, columns are named as the base table's, and no count / paging is involved.
@@ -296,6 +298,16 @@ final class TableDataModel {
         if loadedEpoch != nil, loadedEpoch != epoch { structure = nil }
         loadedEpoch = epoch
         Task { await loadSavedFilters() }
+        reload()
+    }
+
+    /// The table was renamed or moved: keep the tab (filters, sort, mode) but read the new table.
+    func retarget(to ref: TableRef) {
+        guard ref != table else { return }
+        table = ref
+        invalidateStructure()
+        offset = 0
+        pageCursor = .first
         reload()
     }
 

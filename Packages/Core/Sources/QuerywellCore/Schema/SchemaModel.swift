@@ -197,6 +197,25 @@ public protocol SchemaInspector: Sendable {
     func availableCollations() async throws -> [CollationInfo]
     /// Storage engines the server supports (MySQL `SHOW ENGINES`, enabled ones); empty for Postgres.
     func availableEngines() async throws -> [String]
+    /// Engine, collation, comment, counter, row format … for the Operations tab.
+    func tableOptions(of table: TableRef) async throws -> TableOptions
+    /// The table's triggers, sorted by name (MySQL: by timing, event and order).
+    func triggers(on table: TableRef) async throws -> [TriggerInfo]
+    /// `SHOW CREATE TRIGGER` / `pg_get_triggerdef`.
+    func triggerDefinition(_ trigger: TriggerInfo) async throws -> String
+    /// PostgreSQL: argument-less functions returning `trigger` in `schema`; empty for MySQL.
+    func triggerFunctions(schema: String) async throws -> [TableRef]
+    /// PostgreSQL `pg_get_functiondef`; nil for MySQL or a missing function.
+    func functionDefinition(_ function: TableRef) async throws -> String?
+}
+
+/// Defaults so lightweight inspectors (tests, stubs) only implement what they use.
+extension SchemaInspector {
+    public func tableOptions(of table: TableRef) async throws -> TableOptions { TableOptions() }
+    public func triggers(on table: TableRef) async throws -> [TriggerInfo] { [] }
+    public func triggerDefinition(_ trigger: TriggerInfo) async throws -> String { "" }
+    public func triggerFunctions(schema: String) async throws -> [TableRef] { [] }
+    public func functionDefinition(_ function: TableRef) async throws -> String? { nil }
 }
 
 public struct CollationInfo: Hashable, Sendable {
