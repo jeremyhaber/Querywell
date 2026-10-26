@@ -27,6 +27,7 @@ struct ConnectionWindowContent: View {
 
     @State private var showSwitcher = false
     @State private var editor: EditorItem?
+    @State private var showConnectionPopover = false
 
     private var profile: ConnectionProfile { workspace.profile }
 
@@ -39,7 +40,6 @@ struct ConnectionWindowContent: View {
                 }
             }
             .navigationTitle(workspace.title)
-            .navigationSubtitle(profile.isProduction ? "PRODUCTION" : "")
             .toolbar { toolbarContent }
             .overlay {
                 if showSwitcher {
@@ -54,6 +54,7 @@ struct ConnectionWindowContent: View {
             .sheet(item: $editor) { item in
                 ConnectionEditorView(draft: item.draft, isNew: false)
             }
+            .background(HideWindowTitle())  // identity lives in the toolbar; `title` stays set for the Window menu / VoiceOver
             .background(
                 WindowAccessor { window in
                     workspace.window = window
@@ -169,64 +170,181 @@ struct ConnectionWindowContent: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .navigation) {
-            connectionMenu
-            statusView
-        }
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button {
-                showSwitcher = true
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                    Text("Jump to table, query…")
-                    Spacer(minLength: 8)
-                    KeyCap("⌘K")
-                }
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.horizontal, 10)
-                .frame(width: 240, height: 28)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Quick open (⌘K)")
-            .accessibilityLabel("Jump to table or query")
-            .accessibilityHint("Opens the quick switcher")
-
-            Button {
-                workspace.newQuery()
-            } label: {
-                Label("New query", systemImage: "plus").labelStyle(.titleAndIcon)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.accent)
-            .disabled(!workspace.isConnected)
-            .help("New query (⌘T)")
+        // One cohesive leading item (identity + status). On macOS 26 the system would otherwise
+        // wrap it in its own Liquid Glass capsule on top of the pill we draw ourselves.
+        if #available(macOS 26.0, *) {
+            ToolbarItem(placement: .navigation) { identityCluster }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .principal) { flexibleGap }
+                .sharedBackgroundVisibility(.hidden)
+            ToolbarItem(placement: .primaryAction) { trailingCluster }
+                .sharedBackgroundVisibility(.hidden)
+        } else {
+            ToolbarItem(placement: .navigation) { identityCluster }
+            ToolbarItem(placement: .principal) { flexibleGap }
+            ToolbarItem(placement: .primaryAction) { trailingCluster }
         }
     }
 
-    private var connectionMenu: some View {
-        Menu {
-            Button("Reconnect") { Task { await workspace.reconnect() } }
-            Button("Disconnect") { Task { await workspace.disconnect() } }
-                .disabled(workspace.state == .idle)
-            Divider()
-            Button("Edit Connection…") { openEditor() }
-            Button("Copy Connection Details") { copyDetails() }
+    private var identityCluster: some View {
+        HStack(spacing: 12) {
+            connectionButton
+            statusView
+        }
+    }
+
+    /// With the system title hidden nothing pushes the trailing items to the right edge.
+    private var flexibleGap: some View {
+        Color.clear.frame(minWidth: 20, maxWidth: .infinity, minHeight: 1).accessibilityHidden(true)
+    }
+
+    private var trailingCluster: some View {
+        HStack(spacing: 10) {
+            quickOpenButton
+            newQueryButton
+        }
+    }
+
+    private var quickOpenButton: some View {
+        Button {
+            showSwitcher = true
         } label: {
             HStack(spacing: 8) {
-                if profile.isProduction { ProdBadge() }
+                Image(systemName: "magnifyingglass")
+                Text("Jump to table, query…")
+                Spacer(minLength: 8)
+                KeyCap("⌘K")
+            }
+            .font(.system(size: 13))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(minWidth: 220, minHeight: 28)
+            .headerPill()
+        }
+        .buttonStyle(.plain)
+        .help("Quick open (⌘K)")
+        .accessibilityLabel("Jump to table or query")
+        .accessibilityHint("Opens the quick switcher")
+    }
+
+    private var newQueryButton: some View {
+        Button {
+            workspace.newQuery()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "plus").font(.system(size: 12, weight: .semibold))
+                Text("New query").font(.system(size: 13, weight: .medium))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 28)
+            .background(Theme.accent, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+            .opacity(workspace.isConnected ? 1 : 0.45)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+        }
+        .buttonStyle(.plain)
+        .disabled(!workspace.isConnected)
+        .help("New query (⌘T)")
+        .accessibilityLabel("New query")
+    }
+
+    private var connectionButton: some View {
+        Button {
+            showConnectionPopover.toggle()
+        } label: {
+            HStack(spacing: 10) {
+                if profile.isProduction {
+                    ProdBadge()
+                } else if let tag = profile.colorTag {
+                    ColorTagSwatch(tag: tag)
+                }
                 Text(profile.name)
                     .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
                 Text(headerSubtitle)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textSecondary)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 28)
+            .headerPill()
+        }
+        .buttonStyle(.plain)
+        .help("Connection actions")
+        .accessibilityLabel(
+            "\(profile.name), \(profile.isProduction ? "production connection, " : "")\(workspace.summary.engineLabel). Connection menu")
+        .popover(isPresented: $showConnectionPopover, arrowEdge: .bottom) { connectionPopover }
+    }
+
+    private var connectionPopover: some View {
+        let summary = workspace.summary
+        return VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                detailRow("Engine", summary.engineLabel)
+                detailRow("Endpoint", summary.endpointLabel)
+                detailRow("Access", summary.accessLabel)
+                detailRow("TLS", tlsLabel)
+            }
+            Divider()
+            VStack(alignment: .leading, spacing: 2) {
+                popoverAction("Reconnect", systemImage: "arrow.clockwise") {
+                    Task { await workspace.reconnect() }
+                }
+                popoverAction("Disconnect", systemImage: "bolt.slash", enabled: workspace.state != .idle) {
+                    Task { await workspace.disconnect() }
+                }
+                popoverAction("Edit Connection…", systemImage: "pencil") { openEditor() }
+                popoverAction("Copy Connection Details", systemImage: "doc.on.doc") { copyDetails() }
             }
         }
-        .menuIndicator(.visible)
-        .help("Connection actions")
-        .accessibilityLabel("\(profile.name), \(profile.isProduction ? "production, " : "")\(headerSubtitle). Connection menu")
+        .padding(14)
+        .frame(width: 300)
+    }
+
+    private func detailRow(_ title: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(title)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 64, alignment: .leading)
+            Text(value)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func popoverAction(
+        _ title: String, systemImage: String, enabled: Bool = true, action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            showConnectionPopover = false
+            action()
+        } label: {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 13))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    private var tlsLabel: String {
+        switch profile.tls.mode {
+        case .disabled: "Off"
+        case .preferred: "On when available"
+        case .required: "On"
+        case .verifyCA: "On, verifies CA"
+        case .verifyIdentity: "On, verifies identity"
+        }
     }
 
     private var headerSubtitle: String {
@@ -240,7 +358,7 @@ struct ConnectionWindowContent: View {
             case .connected:
                 HStack(spacing: 6) {
                     StatusDot(color: Theme.connectedDot)
-                    Text(workspace.latencyMilliseconds.map { "Connected · \($0) ms" } ?? "Connected")
+                    Text(workspace.latency.map { "Connected · \(LatencyFormatter.string(for: $0))" } ?? "Connected")
                         .foregroundStyle(Theme.connectedText)
                 }
             case .connecting(let stage):
@@ -262,6 +380,7 @@ struct ConnectionWindowContent: View {
         }
         .font(.system(size: 12))
         .lineLimit(1)
+        .fixedSize()
         .accessibilityElement(children: .combine)
     }
 
@@ -401,5 +520,13 @@ struct TabContentView: View {
             }
             .controlSize(.large)
         }
+    }
+}
+
+extension View {
+    /// The design's header control: rounded 8, 1pt separator border, control background.
+    func headerPill() -> some View {
+        background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.separator))
     }
 }

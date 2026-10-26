@@ -147,3 +147,36 @@ extension View {
         modifier(MiddleClickModifier(action: action))
     }
 }
+
+/// Keeps a window's title hidden (the toolbar carries the identity) while `title` stays set for
+/// the Window menu, Mission Control and VoiceOver. SwiftUI re-applies the title visibility when the
+/// scene's title changes, so this observes the property and puts it back.
+@MainActor
+enum WindowTitleHider {
+    nonisolated(unsafe) private static var key: UInt8 = 0
+
+    static func install(on window: NSWindow) {
+        window.titleVisibility = .hidden
+        guard objc_getAssociatedObject(window, &key) == nil else { return }
+        let observation = window.observe(\.titleVisibility, options: [.new]) { window, _ in
+            DispatchQueue.main.async {
+                if window.titleVisibility != .hidden { window.titleVisibility = .hidden }
+            }
+        }
+        objc_setAssociatedObject(window, &key, observation, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+    }
+}
+
+/// Hides the title (see ``WindowTitleHider``) as soon as the view lands in a window.
+struct HideWindowTitle: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { HiderView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    final class HiderView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard let window else { return }
+            MainActor.assumeIsolated { WindowTitleHider.install(on: window) }
+        }
+    }
+}

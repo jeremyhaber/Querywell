@@ -72,7 +72,7 @@ struct SnapshotTests {
             window.setContentSize(size)
             window.orderFrontRegardless()
             // Let SwiftUI lay out, run onAppear tasks and settle.
-            RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+            RunLoop.main.run(until: Date().addingTimeInterval(2))
             let target = window.contentView?.superview ?? window.contentView!
             let rep = try #require(target.bitmapImageRepForCachingDisplay(in: target.bounds))
             target.cacheDisplay(in: target.bounds, to: rep)

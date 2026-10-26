@@ -50,8 +50,8 @@ final class ConnectionWorkspace: Identifiable {
         return nil
     }
 
-    var latencyMilliseconds: Int? {
-        if case .connected(_, let latency) = state { return latency?.wholeMilliseconds }
+    var latency: Duration? {
+        if case .connected(_, let latency) = state { return latency }
         return nil
     }
 
