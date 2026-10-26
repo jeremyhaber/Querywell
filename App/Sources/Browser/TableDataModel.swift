@@ -214,6 +214,8 @@ final class TableDataModel {
     @ObservationIgnored var gate: WriteGate?
     @ObservationIgnored var isReadOnlyProvider: @MainActor () -> Bool = { false }
     @ObservationIgnored var onDirtyChange: @MainActor (Bool) -> Void = { _ in }
+    /// The user changed sort or filters; the workspace turns a preview tab into a normal one.
+    @ObservationIgnored var onUserModified: @MainActor () -> Void = {}
     @ObservationIgnored var lastReportedDirty = false
     @ObservationIgnored var toastTask: Task<Void, Never>?
     @ObservationIgnored var rebaseOnNextLoad = false
@@ -483,6 +485,7 @@ final class TableDataModel {
 
     func toggleSort(column: String, additive: Bool) {
         sort = SortCycle.next(current: sort, column: column, additive: additive)
+        onUserModified()
         resetPaging()
         reload()
     }
@@ -492,6 +495,7 @@ final class TableDataModel {
         guard trimmed != appliedWhere || failure != nil else { return }
         appliedWhere = trimmed
         appliedSavedID = nil
+        onUserModified()
         resetPaging()
         reload()
     }
@@ -527,10 +531,11 @@ final class TableDataModel {
         filters.filters = [filter]
         appliedWhere = ""
         whereDraft = ""
-        filtersChanged()
+        filtersChanged(userInitiated: false)
     }
 
-    private func filtersChanged() {
+    private func filtersChanged(userInitiated: Bool = true) {
+        if userInitiated { onUserModified() }
         appliedSavedID = nil
         resetPaging()
         reload()

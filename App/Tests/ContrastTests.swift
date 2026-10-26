@@ -67,6 +67,8 @@ struct ContrastTests {
         add("warningText", ThemeNS.warningText); add("warningBackground", ThemeNS.warningBackground); add("warningAmberFill", ThemeNS.warningAmberFill)
         add("dangerText", ThemeNS.dangerText); add("dangerBackground", ThemeNS.dangerBackground); add("dangerFill", ThemeNS.dangerFill)
         add("tabQuery", ThemeNS.tabQuery)
+        add("tabRed", ThemeNS.tabRed); add("tabOrange", ThemeNS.tabOrange); add("tabYellow", ThemeNS.tabYellow)
+        add("tabGreen", ThemeNS.tabGreen); add("tabBlue", ThemeNS.tabBlue); add("tabPurple", ThemeNS.tabPurple)
         add("syntaxKeyword", ThemeNS.syntaxKeyword); add("syntaxString", ThemeNS.syntaxString); add("syntaxFunction", ThemeNS.syntaxFunction)
         add("syntaxNumber", ThemeNS.syntaxNumber); add("syntaxComment", ThemeNS.syntaxComment); add("syntaxVariable", ThemeNS.syntaxVariable)
         add("editorCurrentLine", ThemeNS.editorCurrentLine); add("editorBracketMatch", ThemeNS.editorBracketMatch); add("editorLineNumber", ThemeNS.editorLineNumber)
@@ -127,6 +129,9 @@ struct ContrastTests {
         text(["separatorStrong", "accent", "cardSelectedBorder", "connectedDot", "pendingEditBar", "pendingInsertedBar", "dangerFill"],
              on: ["background"], 3.0)
         text(["tagProduction", "tagStaging", "tagLocal"], on: ["background", "sidebar"], 3.0)
+        // Tag band / tab-strip tint and per-tab colour marks sit on the tab strip (chrome) and the content.
+        text(["tagProduction", "tagStaging", "tagLocal", "tabRed", "tabOrange", "tabYellow", "tabGreen", "tabBlue", "tabPurple"],
+             on: ["background", "chrome"], 3.0)
         text(["separatorStrong", "accent", "pendingPillBorder"], on: ["elevated", "chrome"], 3.0)
         text(["pendingEditBar"], on: ["pendingEditCell"], 3.0)
         text(["pendingPillBorder"], on: ["pendingPillBackground"], 3.0)

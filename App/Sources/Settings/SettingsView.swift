@@ -49,6 +49,13 @@ private struct GeneralSettings: View {
                 }
                 Text("Hold ⌥ while clicking Connect to open a second window either way.")
                     .font(.caption).foregroundStyle(Theme.textSecondary)
+                Picker("Clicking a table", selection: model.binding(\.general.tableClickBehaviour)) {
+                    Text("Opens in preview tab").tag(TableClickBehaviour.preview)
+                    Text("Always opens a new tab").tag(TableClickBehaviour.newTab)
+                    Text("Reuses the table’s existing tab").tag(TableClickBehaviour.reuseExisting)
+                }
+                Text("A preview tab (italic title) is replaced by the next table you click. Double-click the table or tab, or edit, filter or sort, to keep it. ⌘-click always opens a new tab.")
+                    .font(.caption).foregroundStyle(Theme.textSecondary)
                 Toggle(
                     "Confirm before closing a connected window",
                     isOn: model.binding(\.general.confirmBeforeClosingConnectionWindow))

@@ -31,6 +31,8 @@ final class ConnectionWorkspace: Identifiable {
     let gate = WriteGate()
     /// Safety settings, kept current by the window (`AppSettings.safety`).
     var safety = AppSettings.Safety()
+    /// What a plain click on a table does (`AppSettings.general.tableClickBehaviour`, kept current by the window).
+    var tableClickBehaviour = TableClickBehaviour.preview
     /// A tab with unsaved edits is being closed: asks Review / Discard / Cancel.
     var closePrompt: TabClosePrompt?
     /// The open "Table Operations" sheet, if any.
@@ -295,6 +297,29 @@ final class ConnectionWorkspace: Identifiable {
         tabs.close(id: id)
     }
 
+    /// Closes several tabs through the same unsaved-edit check as `requestClose`. Clean tabs close at
+    /// once; the prompt handles one tab at a time, so only the first tab with unsaved edits is asked
+    /// about and the other dirty tabs stay open.
+    func requestClose(tabs ids: [WorkspaceTab.ID]) {
+        var asked = false
+        for id in ids {
+            if pendingModels(for: id).isEmpty {
+                tabs.close(id: id)
+            } else if !asked {
+                asked = true
+                requestClose(tab: id)
+            }
+        }
+    }
+
+    /// Tab context menu: a copy of the tab right after it.
+    func duplicateTab(_ id: WorkspaceTab.ID) {
+        guard let new = tabs.duplicate(id: id) else { return }
+        if let source = tabs.tab(id: id), case .query = source.kind, let text = queryModels[id]?.text {
+            tabs.setQueryText(id: new, text)
+        }
+    }
+
     /// Resolves the close prompt.
     func resolveClosePrompt(_ choice: TabClosePrompt.Choice) {
         guard let prompt = closePrompt else { return }
@@ -344,7 +369,7 @@ final class ConnectionWorkspace: Identifiable {
         let outcome = await runDestructive(statements, schema: tables.first?.ref.schema, title: "Empty")
         let real = tables.filter { $0.kind == .table }
         for info in real.prefix(outcome.completed) {
-            if let model = tableModel(forTable: info.ref) {
+            for model in tableModels(forTable: info.ref) {
                 model.discardAll()
                 model.reload()
             }
@@ -359,7 +384,7 @@ final class ConnectionWorkspace: Identifiable {
         let statements = TableOperations.drop(tables, dialect: dialect)
         let outcome = await runDestructive(statements, schema: tables.first?.ref.schema, title: "Drop")
         for info in tables.prefix(outcome.completed) {
-            for tab in tabs.tabs where tab.kind == .table(database: info.ref.schema, name: info.ref.name) {
+            for tab in tabs.tabs(database: info.ref.schema, name: info.ref.name) {
                 tableModels[tab.id]?.discardAll()
                 tabs.close(id: tab.id)
             }
@@ -506,11 +531,24 @@ final class ConnectionWorkspace: Identifiable {
 
     // MARK: Table tabs
 
-    /// Opens (or focuses) a table's tab; `filter` replaces the tab's chips (foreign-key navigation).
-    func openTable(_ ref: TableRef, filter: ColumnFilter? = nil) {
-        let id = tabs.openTable(database: ref.schema, name: ref.name)
-        guard let tab = tabs.tab(id: id), let model = tableModel(forTab: tab) else { return }
+    /// Opens a table per the click behaviour setting; `filter` replaces the tab's chips (foreign-key
+    /// navigation, search & replace). `newTab` (command-click, "Open in New Tab") always opens a new tab,
+    /// even when the table is already open elsewhere. Returns the tab shown.
+    @discardableResult
+    func openTable(_ ref: TableRef, filter: ColumnFilter? = nil, newTab: Bool = false) -> WorkspaceTab.ID {
+        // Navigating from a tab (foreign key, search hit) must not replace the tab you came from.
+        if filter != nil { keepSelectedTab() }
+        let result = tabs.openTable(
+            database: ref.schema, name: ref.name, behaviour: tableClickBehaviour, forceNewTab: newTab)
+        if let replaced = result.replacedID { tableModels[replaced] = nil }
+        guard let tab = tabs.tab(id: result.id), let model = tableModel(forTab: tab) else { return result.id }
         if let filter { model.replaceFilters(with: filter) }
+        return result.id
+    }
+
+    /// Makes the selected preview tab a normal one (double-click on the row or tab).
+    func keepSelectedTab() {
+        if let id = tabs.selectedID { tabs.keep(id: id) }
     }
 
     /// The model behind a table tab, created on first use. Models of closed tabs are dropped here.
@@ -533,13 +571,22 @@ final class ConnectionWorkspace: Identifiable {
         model.isReadOnlyProvider = { [weak self] in self?.profile.effectiveReadOnly ?? false }
         let tabID = tab.id
         model.onDirtyChange = { [weak self] dirty in self?.tabs.setDirty(id: tabID, dirty) }
+        model.onUserModified = { [weak self] in self?.tabs.keep(id: tabID) }
         tableModels[tab.id] = model
         return model
     }
 
-    /// The model of the open tab for `ref`, if any.
+    /// The model of an open tab for `ref`: the selected tab if it shows the table, else the first (several
+    /// tabs may show one table).
     func tableModel(forTable ref: TableRef) -> TableDataModel? {
-        tabs.tabs.first { $0.kind == .table(database: ref.schema, name: ref.name) }.flatMap { tableModel(forTab: $0) }
+        let matching = tabs.tabs(database: ref.schema, name: ref.name)
+        let tab = matching.first { $0.id == tabs.selectedID } ?? matching.first
+        return tab.flatMap { tableModel(forTab: $0) }
+    }
+
+    /// Models of every open tab for `ref`.
+    func tableModels(forTable ref: TableRef) -> [TableDataModel] {
+        tabs.tabs(database: ref.schema, name: ref.name).compactMap { tableModel(forTab: $0) }
     }
 
     /// ⌘R: re-read schemas and tables, and the structure of open tables.

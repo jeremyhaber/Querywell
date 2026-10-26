@@ -38,8 +38,9 @@ struct ConnectionWindowContent: View {
         content
             .background(Theme.background)
             .overlay(alignment: .top) {
-                if profile.isProduction {
-                    Theme.tagProduction.frame(height: 2).accessibilityHidden(true)
+                // Every tagged connection gets its colour as a band, not just production.
+                if let tag = profile.colorTag {
+                    tag.color.frame(height: 2).accessibilityHidden(true)
                 }
             }
             .navigationTitle(workspace.title)
@@ -84,9 +85,11 @@ struct ConnectionWindowContent: View {
             .task { await workspace.queryLibrary.refreshAllSaved() }
             .onAppear {
                 workspace.safety = model.settings.safety
+                workspace.tableClickBehaviour = model.settings.general.tableClickBehaviour
                 workspace.tools.consoleSettings = model.settings.console
             }
             .onChange(of: model.settings.safety) { _, new in workspace.safety = new }
+            .onChange(of: model.settings.general.tableClickBehaviour) { _, new in workspace.tableClickBehaviour = new }
             .onChange(of: model.settings.console) { _, new in workspace.tools.consoleSettings = new }
             .confirmationDialog(
                 workspace.closePrompt.map { "“\($0.title)” has unsaved edits" } ?? "Unsaved edits",

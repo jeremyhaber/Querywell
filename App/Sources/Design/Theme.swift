@@ -83,6 +83,13 @@ enum ThemeNS {
     /// Fill of destructive buttons (white text on it).
     static var dangerFill: NSColor { .dynamic(light: 0xB3261E, dark: 0xC4314B) }
 
+    // Per-tab colours (tab context menu > Color); drawn as a dot and a top edge, so non-text 3:1 on chrome and background.
+    static var tabRed: NSColor { .dynamic(light: 0xC4314B, dark: 0xE5566E) }
+    static var tabOrange: NSColor { .dynamic(light: 0xB85A0A, dark: 0xF0914F) }
+    static var tabYellow: NSColor { .dynamic(light: 0x9A7000, dark: 0xE8C04A) }
+    static var tabGreen: NSColor { .dynamic(light: 0x2A8F52, dark: 0x4CC37D) }
+    static var tabBlue: NSColor { .dynamic(light: 0x2563D9, dark: 0x6AA0FF) }
+    static var tabPurple: NSColor { .dynamic(light: 0x6A3FC2, dark: 0xA98BF0) }
     static var tabQuery: NSColor { .dynamic(light: 0x6A3FC2, dark: 0xA98BF0) }
 
     // Phase 5 (query editor). Light values are the design's; darks keep >= 4.5:1 on the dark editor.
@@ -150,6 +157,12 @@ enum Theme {
     static var dangerText: Color { Color(nsColor: ThemeNS.dangerText) }
     static var dangerBackground: Color { Color(nsColor: ThemeNS.dangerBackground) }
 
+    static var tabRed: Color { Color(nsColor: ThemeNS.tabRed) }
+    static var tabOrange: Color { Color(nsColor: ThemeNS.tabOrange) }
+    static var tabYellow: Color { Color(nsColor: ThemeNS.tabYellow) }
+    static var tabGreen: Color { Color(nsColor: ThemeNS.tabGreen) }
+    static var tabBlue: Color { Color(nsColor: ThemeNS.tabBlue) }
+    static var tabPurple: Color { Color(nsColor: ThemeNS.tabPurple) }
     static var tabQuery: Color { Color(nsColor: ThemeNS.tabQuery) }
     static var syntaxKeyword: Color { Color(nsColor: ThemeNS.syntaxKeyword) }
     static var syntaxString: Color { Color(nsColor: ThemeNS.syntaxString) }
@@ -178,6 +191,18 @@ enum Theme {
     static let controlRadius: CGFloat = 8
     static let smallRadius: CGFloat = 6
     static let badgeRadius: CGFloat = 4
+
+    /// The user's colour for a tab.
+    static func color(for tabColor: TabColor) -> Color {
+        switch tabColor {
+        case .red: tabRed
+        case .orange: tabOrange
+        case .yellow: tabYellow
+        case .green: tabGreen
+        case .blue: tabBlue
+        case .purple: tabPurple
+        }
+    }
 
     /// Dot colour for a tab kind.
     static func color(for accent: TabAccent) -> Color {
