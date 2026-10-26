@@ -118,6 +118,38 @@ public struct EditSession: Sendable {
 
     public var insertedRowIDs: [InsertedRowID] { inserted.map(\.id) }
 
+    /// One pending cell edit with the value it will replace.
+    public struct CellChangeInfo: Sendable, Hashable {
+        public var column: String
+        /// The value read from the server (nil when the caller didn't supply it).
+        public var original: DatabaseValue?
+        public var new: DatabaseValue
+    }
+
+    /// Rows with pending cell edits, in the order they were first edited.
+    public var updatedRowKeys: [RowKey] { updateOrder }
+
+    /// Rows marked for deletion, in marking order.
+    public var deletedRowKeys: [RowKey] { deleted }
+
+    /// The pending edits of one row, in edit order.
+    public func cellChanges(for row: RowKey) -> [CellChangeInfo] {
+        guard let u = updates[row] else { return [] }
+        return u.order.compactMap { name in
+            u.cells[name].map { CellChangeInfo(column: name, original: $0.original, new: $0.new) }
+        }
+    }
+
+    /// The value first read from the server for an edited cell, if the caller supplied it.
+    public func originalValue(_ row: RowKey, column: String) -> DatabaseValue? {
+        updates[row]?.cells[column]?.original
+    }
+
+    /// "ID 1042" / "id 3, tenant 7": names the row for messages.
+    public func rowLabel(_ key: RowKey) -> String {
+        zip(primaryKey, key.values).map { "\($0) \($1.displayString)" }.joined(separator: ", ")
+    }
+
     public func insertedValues(_ id: InsertedRowID) -> [String: DatabaseValue]? {
         inserted.first(where: { $0.id == id })?.values
     }
@@ -139,6 +171,20 @@ public struct EditSession: Sendable {
         if u.cells[column] == nil { u.order.append(column) }
         u.cells[column] = CellChange(original: baseline, new: new)
         if updates[row] == nil { updateOrder.append(row) }
+        updates[row] = u
+    }
+
+    /// Replaces the recorded server value of an edited cell, after the row was reloaded: the edit now
+    /// overwrites what is there today instead of what was there at first load. An edit that equals the
+    /// fresh value disappears.
+    public mutating func rebaseOriginal(row: RowKey, column: String, original: DatabaseValue) {
+        guard var u = updates[row], var change = u.cells[column] else { return }
+        if change.new == original {
+            removeCell(row: row, column: column)
+            return
+        }
+        change.original = original
+        u.cells[column] = change
         updates[row] = u
     }
 

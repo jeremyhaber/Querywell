@@ -38,7 +38,7 @@ struct TabStripView: View {
                     count: workspace.tabs.tabs.count,
                     isSelected: workspace.tabs.selectedID == tab.id,
                     onSelect: { workspace.tabs.select(id: tab.id) },
-                    onClose: { workspace.tabs.close(id: tab.id) },
+                    onClose: { workspace.requestClose(tab: tab.id) },
                     onDrop: { movedID in reorder(movedID, onto: tab.id) })
             }
         }

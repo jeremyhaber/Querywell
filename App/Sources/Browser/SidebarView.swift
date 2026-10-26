@@ -5,6 +5,7 @@ import SwiftUI
 /// Left column (design: Main.dc.html `aside`): schema picker, table filter, tables, views and routines.
 struct WorkspaceSidebar: View {
     @Bindable var workspace: ConnectionWorkspace
+    @Environment(AppModel.self) private var app
     @State private var filterFocusToken = 0
     @FocusState private var filterFocused: Bool
     @FocusState private var listFocused: Bool
@@ -200,9 +201,19 @@ struct WorkspaceSidebar: View {
         return label
     }
 
+    /// The tables an action applies to: the selection when the clicked row is part of it, else just that row.
+    private func targets(for info: TableInfo) -> [TableInfo] {
+        guard browser.selectedTables.contains(info.ref.name), browser.selectedTables.count > 1 else { return [info] }
+        return (browser.current.map { $0.tables + $0.views } ?? []).filter { browser.selectedTables.contains($0.ref.name) }
+    }
+
     @ViewBuilder
     private func contextMenu(for info: TableInfo) -> some View {
         let name = info.ref.name
+        let targets = targets(for: info)
+        let readOnly = workspace.profile.effectiveReadOnly
+        let realTables = targets.filter { $0.kind == .table }
+        let unsupported = BatchOperationsModel.unsupportedReason(for: workspace.profile.engine)
         Button("Open in New Tab") { open(name) }
         Button("Show Structure") {
             open(name)
@@ -213,9 +224,38 @@ struct WorkspaceSidebar: View {
             NSPasteboard.general.setString(name, forType: .string)
         }
         Divider()
-        // Hooks for the editing work: `browser.selectedTables` holds the multi-selection.
-        Button("Truncate…") {}.disabled(true).help("Phase 4 editing")
-        Button("Drop…") {}.disabled(true).help("Phase 4 editing")
+        Button(targets.count > 1 ? "Table Operations… (\(targets.count) tables)" : "Table Operations…") {
+            workspace.presentTableOperations(for: targets)
+        }
+        .disabled(unsupported != nil || readOnly)
+        .help(unsupported ?? (readOnly ? "This connection is read-only." : "Change storage engine or character set"))
+        Divider()
+        Button(targets.count > 1 ? "Empty \(realTables.count) Tables…" : "Truncate…") {
+            run(targets: realTables, destructive: .truncate)
+        }
+        .disabled(readOnly || realTables.isEmpty)
+        .help(readOnly ? "This connection is read-only." : "Delete every row, keep the table")
+        Button(targets.count > 1 ? "Drop \(targets.count) Objects…" : "Drop…") {
+            run(targets: targets, destructive: .drop)
+        }
+        .disabled(readOnly)
+        .help(readOnly ? "This connection is read-only." : "Delete the table or view")
+    }
+
+    private enum Destructive { case truncate, drop }
+
+    private func run(targets: [TableInfo], destructive: Destructive) {
+        Task {
+            let outcome = destructive == .truncate ? await workspace.truncate(targets) : await workspace.drop(targets)
+            guard let failure = outcome.failure else { return }
+            let verb = destructive == .truncate ? "empty" : "drop"
+            app.alert = AppAlert(
+                title: "Couldn't \(verb) the table",
+                message: failure.message,
+                recovery: outcome.completed > 0
+                    ? "\(outcome.completed) earlier statement\(outcome.completed == 1 ? "" : "s") already ran. Failed: \(failure.statement)"
+                    : "Nothing was changed. Statement: \(failure.statement)")
+        }
     }
 
     private func open(_ name: String) {

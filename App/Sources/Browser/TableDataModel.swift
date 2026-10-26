@@ -15,23 +15,77 @@ struct GridColumn: Equatable, Identifiable {
     var id: String { name }
 }
 
-/// An immutable page of rows, rendered by the grid. A new instance means "reload the table view".
+/// How a grid row relates to the pending edits.
+enum GridRowMark: Equatable {
+    case normal, deleted, inserted
+}
+
+/// A cell addressed by its position in the displayed rows.
+struct GridCellPosition: Hashable {
+    var row: Int
+    var column: Int
+}
+
+/// An immutable page of rows, rendered by the grid. A new `id` means "reload the table view";
+/// the same `id` with a new `revision` means "same page, pending edits changed" (the grid keeps its
+/// scroll position and selection).
+///
+/// Displayed rows are the inserted (not yet saved) rows first, then the loaded rows with pending
+/// cell edits substituted in.
 final class GridContent {
-    let id = UUID()
+    let id: UUID
+    let revision: Int
     let columns: [GridColumn]
     let rows: [[DatabaseValue]]
-    /// 0-based offset of the first row in the whole result (for the row-number gutter).
+    /// 0-based offset of the first *loaded* row in the whole result (for the row-number gutter).
     let offset: Int
     let duration: Duration
+    /// Rows at the top that are unsaved inserts.
+    let insertedCount: Int
+    /// Per displayed row; empty means all `.normal`.
+    let rowMarks: [GridRowMark]
+    /// Cells with a pending edit (displayed row, column index).
+    let editedCells: Set<GridCellPosition>
+    /// Cells of inserted rows the server will fill in (default / auto-increment).
+    let unsetCells: Set<GridCellPosition>
+    /// The grid keeps its scroll offset when it shows this content (reload after commit).
+    let preservesViewport: Bool
+    /// Rows to select when the grid shows this content (reload after commit keeps the selection).
+    let selectionToRestore: [Int]?
 
-    init(columns: [GridColumn], rows: [[DatabaseValue]], offset: Int, duration: Duration) {
+    init(columns: [GridColumn], rows: [[DatabaseValue]], offset: Int, duration: Duration,
+         id: UUID = UUID(), revision: Int = 0, insertedCount: Int = 0, rowMarks: [GridRowMark] = [],
+         editedCells: Set<GridCellPosition> = [], unsetCells: Set<GridCellPosition> = [], preservesViewport: Bool = false,
+         selectionToRestore: [Int]? = nil) {
+        self.id = id
+        self.revision = revision
         self.columns = columns
         self.rows = rows
         self.offset = offset
         self.duration = duration
+        self.insertedCount = insertedCount
+        self.rowMarks = rowMarks
+        self.editedCells = editedCells
+        self.unsetCells = unsetCells
+        self.preservesViewport = preservesViewport
+        self.selectionToRestore = selectionToRestore
     }
 
     var columnSignature: [String] { columns.map { "\($0.name)|\($0.typeLabel)|\($0.isPrimaryKey)" } }
+
+    func mark(_ row: Int) -> GridRowMark { rowMarks.indices.contains(row) ? rowMarks[row] : .normal }
+
+    func isEdited(row: Int, column: Int) -> Bool { editedCells.contains(GridCellPosition(row: row, column: column)) }
+
+    func isUnset(row: Int, column: Int) -> Bool { unsetCells.contains(GridCellPosition(row: row, column: column)) }
+
+    /// A copy with the same page but different decorations / substituted values.
+    func decorated(rows: [[DatabaseValue]], insertedCount: Int, rowMarks: [GridRowMark], editedCells: Set<GridCellPosition>,
+                   unsetCells: Set<GridCellPosition>, revision: Int) -> GridContent {
+        GridContent(columns: columns, rows: rows, offset: offset, duration: duration, id: id, revision: revision,
+                    insertedCount: insertedCount, rowMarks: rowMarks, editedCells: editedCells, unsetCells: unsetCells,
+                    preservesViewport: preservesViewport, selectionToRestore: selectionToRestore)
+    }
 }
 
 /// The funnel popover is asked for through this (Add filter, chip click, ⌘⌥F, header funnel).
@@ -88,8 +142,10 @@ final class TableDataModel {
     private(set) var appliedWhere = ""
     private(set) var offset = 0
 
-    // Results.
-    private(set) var content: GridContent?
+    // Results. `content` is what the grid shows (loaded rows with pending edits applied); `loadedContent`
+    // is the page exactly as the server returned it.
+    var content: GridContent?
+    var loadedContent: GridContent?
     private(set) var isLoading = false
     private(set) var failure: LoadFailure?
     private(set) var count: CountState = .unknown
@@ -108,6 +164,25 @@ final class TableDataModel {
     var showSQL = false
     private(set) var savedFilters: [SavedFilter] = []
     private(set) var appliedSavedID: UUID?
+
+    // Editing (logic in TableEditing.swift).
+    var editSession: EditSession?
+    var editRevision = 0
+    /// Unsaved inserted rows in display order (newest first).
+    var insertedOrder: [InsertedRowID] = []
+    var isCommitting = false
+    var reviewPresented = false
+    /// The last failed commit, shown in the Review sheet until the user acts.
+    var commitReport: CommitReport?
+    var toast: ModelToast?
+    /// Asks the grid to select a row and optionally start editing a cell (Add Row, Duplicate).
+    var editRequest: GridEditRequest?
+    @ObservationIgnored var gate: WriteGate?
+    @ObservationIgnored var isReadOnlyProvider: @MainActor () -> Bool = { false }
+    @ObservationIgnored var onDirtyChange: @MainActor (Bool) -> Void = { _ in }
+    @ObservationIgnored var lastReportedDirty = false
+    @ObservationIgnored var toastTask: Task<Void, Never>?
+    @ObservationIgnored var rebaseOnNextLoad = false
 
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var loadTask: Task<Void, Never>?
@@ -130,7 +205,7 @@ final class TableDataModel {
     }
 
     var pageInfo: PageInfo {
-        let rows = content?.rows.count ?? 0
+        let rows = loadedContent?.rows.count ?? 0
         switch count {
         case .unknown: return PageInfo(offset: offset, rowCount: rows, pageSize: pageSize)
         case .estimate(let n): return PageInfo(offset: offset, rowCount: rows, pageSize: pageSize, total: n, totalIsExact: false)
@@ -175,7 +250,7 @@ final class TableDataModel {
         structureFailure = nil
     }
 
-    func reload(keepCount: Bool = false) {
+    func reload(keepCount: Bool = false, preserveViewport: Bool = false, restoreSelection: [Int]? = nil) {
         if !keepCount { countKey = nil }
         guard let session = sessionProvider() else {
             failure = LoadFailure(message: "Not connected.", sql: nil)
@@ -187,11 +262,12 @@ final class TableDataModel {
         countTask?.cancel()
         isLoading = true
         loadTask = Task { [weak self] in
-            await self?.performLoad(generation: gen, session: session)
+            await self?.performLoad(generation: gen, session: session, preserveViewport: preserveViewport, restoreSelection: restoreSelection)
         }
     }
 
-    private func performLoad(generation gen: Int, session: any DatabaseSession) async {
+    private func performLoad(generation gen: Int, session: any DatabaseSession, preserveViewport: Bool = false,
+                             restoreSelection: [Int]? = nil) async {
         if structure == nil {
             isLoadingStructure = true
             do {
@@ -215,10 +291,17 @@ final class TableDataModel {
         do {
             let result = try await session.execute(sql)
             guard gen == generation else { return }
-            content = GridContent(
-                columns: mergedColumns(result.columns), rows: result.rows, offset: query.offset, duration: result.duration)
+            loadedContent = GridContent(
+                columns: mergedColumns(result.columns), rows: result.rows, offset: query.offset, duration: result.duration,
+                preservesViewport: preserveViewport, selectionToRestore: preserveViewport ? restoreSelection : nil)
+            prepareEditSession()
+            if rebaseOnNextLoad {
+                rebaseOnNextLoad = false
+                rebasePendingOriginals()
+            }
+            rebuildDisplay()
             failure = nil
-            selectedRows = []
+            selectedRows = preserveViewport ? (restoreSelection ?? []).filter { $0 < (content?.rows.count ?? 0) } : []
             hasLoaded = true
             isLoading = false
             startCount(generation: gen, session: session, dialect: dialect, query: query, rowsOnPage: result.rows.count)
@@ -389,11 +472,12 @@ final class TableDataModel {
     /// "Row 1042" (single primary key) or "Row 17" (position in the result).
     var inspectorTitle: String {
         guard let content, let first = selectedRows.first, content.rows.indices.contains(first) else { return "Row" }
+        if first < content.insertedCount { return "New row" }
         let pk = structure?.primaryKey ?? []
         if pk.count == 1, let index = content.columns.firstIndex(where: { $0.name.caseInsensitiveCompare(pk[0]) == .orderedSame }) {
             return "Row \(content.rows[first][index].displayString)"
         }
-        return "Row \(content.offset + first + 1)"
+        return "Row \(content.offset + first - content.insertedCount + 1)"
     }
 
     // MARK: Foreign keys

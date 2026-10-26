@@ -20,6 +20,7 @@ enum GridFonts {
     static let proportional = NSFont.systemFont(ofSize: 13)
     static let pill = NSFont.systemFont(ofSize: 11, weight: .medium)
     static let gutter = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    static let gutterNew = NSFont.systemFont(ofSize: 10, weight: .bold)
     static let headerName = NSFont.systemFont(ofSize: 12, weight: .semibold)
     static let headerType = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
     static let nullFont: NSFont = {
@@ -29,11 +30,25 @@ enum GridFonts {
     static func cell(mono useMono: Bool) -> NSFont { useMono ? mono : proportional }
 }
 
+/// Pending-edit decoration of one cell.
+struct GridCellDecoration: Equatable {
+    /// Amber background with a 3px leading bar.
+    var edited = false
+    /// Text shown in place of the value (inserted rows: the server fills this in).
+    var placeholder: String?
+    /// Row is marked for deletion.
+    var struck = false
+    /// The cell keyboard input goes to.
+    var active = false
+}
+
 /// A grid cell that draws its own text. One instance per visible cell, reused across rows.
 final class GridCellView: NSView, NSViewToolTipOwner {
     enum Style {
-        case plain, null, link, pill(positive: Bool), gutter
+        case plain, null, link, pill(positive: Bool), gutter, gutterNew
     }
+
+    private var decoration = GridCellDecoration()
 
     private(set) var string = ""
     private var style: Style = .plain
@@ -54,8 +69,10 @@ final class GridCellView: NSView, NSViewToolTipOwner {
     override var wantsUpdateLayer: Bool { false }
 
     func configure(
-        value: DatabaseValue, string: String, style: Style, font: NSFont, accessibilityText: String
+        value: DatabaseValue, string: String, style: Style, font: NSFont, accessibilityText: String,
+        decoration: GridCellDecoration = GridCellDecoration()
     ) {
+        self.decoration = decoration
         self.value = value
         self.string = string
         self.style = style
@@ -74,7 +91,7 @@ final class GridCellView: NSView, NSViewToolTipOwner {
 
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
         switch style {
-        case .gutter, .null: return ""
+        case .gutter, .gutterNew, .null: return ""
         default: break
         }
         let text = CellDisplay.full(value)
@@ -87,7 +104,21 @@ final class GridCellView: NSView, NSViewToolTipOwner {
     override func draw(_ dirtyRect: NSRect) {
         let inset = GridMetrics.cellInset
         let available = NSRect(x: inset, y: 0, width: max(bounds.width - inset * 2, 0), height: bounds.height)
+        defer { drawActiveOutline() }
+        if decoration.edited {
+            ThemeNS.pendingEditCell.setFill()
+            bounds.fill()
+            ThemeNS.pendingEditBar.setFill()
+            NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
+        }
+        if let placeholder = decoration.placeholder {
+            drawText(placeholder, in: available, font: GridFonts.nullFont, color: ThemeNS.textTertiary)
+            return
+        }
         switch style {
+        case .gutterNew:
+            drawText(string, in: NSRect(x: 0, y: 0, width: bounds.width - 10, height: bounds.height), font: GridFonts.gutterNew,
+                     color: ThemeNS.pendingInsertedText, alignRight: true)
         case .gutter:
             drawText(string, in: NSRect(x: 0, y: 0, width: bounds.width - 10, height: bounds.height), font: font,
                      color: ThemeNS.textTertiary, alignRight: true)
@@ -118,11 +149,23 @@ final class GridCellView: NSView, NSViewToolTipOwner {
         }
     }
 
+    private func drawActiveOutline() {
+        guard decoration.active else { return }
+        ThemeNS.accent.setStroke()
+        let path = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
+        path.lineWidth = 2
+        path.stroke()
+    }
+
     private func drawText(_ text: String, in rect: NSRect, font: NSFont, color: NSColor, alignRight: Bool = false) {
         guard rect.width > 2 else { return }
         let lineHeight = ceil(font.ascender - font.descender + font.leading)
         let target = NSRect(x: rect.minX, y: rect.minY + (rect.height - lineHeight) / 2, width: rect.width, height: lineHeight)
         var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color, .paragraphStyle: Self.paragraph]
+        if decoration.struck {
+            attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            attributes[.foregroundColor] = ThemeNS.dangerText
+        }
         if alignRight {
             let p = NSMutableParagraphStyle()
             p.alignment = .right
@@ -139,14 +182,31 @@ final class GridCellView: NSView, NSViewToolTipOwner {
 final class GridRowView: NSTableRowView {
     override var isFlipped: Bool { true }
 
+    /// Pending-edit state of the row: deleted rows get a red tint, unsaved inserts a green one.
+    var mark: GridRowMark = .normal {
+        didSet { if mark != oldValue { needsDisplay = true } }
+    }
+
     override func drawSelection(in dirtyRect: NSRect) {
-        ThemeNS.selectedRow.setFill()
+        switch mark {
+        case .normal: ThemeNS.selectedRow.setFill()
+        case .deleted: ThemeNS.pendingDeletedRow.blended(withFraction: 0.35, of: ThemeNS.selectedRow)?.setFill()
+        case .inserted: ThemeNS.pendingInsertedRow.blended(withFraction: 0.35, of: ThemeNS.selectedRow)?.setFill()
+        }
         bounds.fill()
     }
 
     override func drawBackground(in dirtyRect: NSRect) {
-        ThemeNS.background.setFill()
+        switch mark {
+        case .normal: ThemeNS.background.setFill()
+        case .deleted: ThemeNS.pendingDeletedRow.setFill()
+        case .inserted: ThemeNS.pendingInsertedRow.setFill()
+        }
         bounds.fill()
+        if mark == .inserted {
+            ThemeNS.pendingInsertedBar.setFill()
+            NSRect(x: 0, y: 0, width: 3, height: bounds.height).fill()
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {

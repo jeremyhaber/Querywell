@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import QuerywellCore
 
@@ -93,14 +94,93 @@ struct CaptionLabel: View {
 /// active/inactive windows and popovers on macOS 26. Dimmed when disabled.
 struct AccentFillButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    /// Fill colour; the accent unless a caller needs a variant (destructive confirmations use red).
+    var tint: Color?
+
+    init(tint: Color? = nil) { self.tint = tint }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(Theme.accent, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+            .background(tint ?? Theme.accent, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
             .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
             .contentShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
     }
+}
+
+/// Neutral bordered button drawn by us (sheet secondary actions): white fill, 1pt separator.
+struct OutlineButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    var foreground: Color?
+
+    init(foreground: Color? = nil) { self.foreground = foreground }
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(foreground ?? Theme.text)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Theme.elevated.opacity(configuration.isPressed ? 0.7 : 1), in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+            .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.separator))
+            .opacity(isEnabled ? 1 : 0.45)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+    }
+}
+
+/// Selectable monospaced SQL in the design's quiet box (inspector "PENDING SQL", sheets).
+struct SQLBox: View {
+    var sql: String
+    var maxHeight: CGFloat = 160
+    var fontSize: CGFloat = 12
+
+    var body: some View {
+        ScrollView {
+            Text(sql)
+                .font(.system(size: fontSize, design: .monospaced))
+                .foregroundStyle(Theme.text)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+        }
+        .frame(maxHeight: maxHeight)
+        .fixedSize(horizontal: false, vertical: true)
+        .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.separator))
+        .accessibilityLabel("SQL")
+    }
+}
+
+/// Amber callout (warnings in sheets, banners).
+struct WarningCallout: View {
+    var title: String?
+    var lines: [String]
+    var symbol = "exclamationmark.triangle.fill"
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol).foregroundStyle(Theme.pendingEditBar).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                if let title { Text(title).font(.system(size: 12, weight: .semibold)) }
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .foregroundStyle(Theme.pendingPillText)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.pendingPillBackground, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+        .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.pendingPillBorder))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Copies `text` to the general pasteboard.
+@MainActor
+func copyToPasteboard(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
 }

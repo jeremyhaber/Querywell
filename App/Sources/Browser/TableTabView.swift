@@ -25,6 +25,9 @@ struct TableTabView: View {
         }
         .background(Theme.background)
         .background { shortcuts }
+        .sheet(isPresented: $model.reviewPresented) {
+            ReviewChangesSheet(model: model) { model.reviewPresented = false }
+        }
         .task(id: workspace.connectionEpoch) {
             configure()
             model.loadIfNeeded(epoch: workspace.connectionEpoch)
@@ -54,6 +57,9 @@ struct TableTabView: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
             }
+            if model.hasPendingChanges {
+                PendingEditsPill(count: model.pendingEditCount) { model.reviewPresented = true }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -65,6 +71,7 @@ struct TableTabView: View {
     private var dataPane: some View {
         VStack(spacing: 0) {
             FilterBar(model: model)
+            if let block = model.editBlock, model.structure != nil { EditBlockBanner(block: block) }
             HSplitView {
                 gridPane
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
@@ -76,7 +83,8 @@ struct TableTabView: View {
                         values: model.selectedValues.first,
                         focusColumn: model.inspectorFocusColumn,
                         nullDisplay: model.nullDisplay,
-                        onClose: { model.inspectorVisible = false })
+                        onClose: { model.inspectorVisible = false },
+                        editing: inspectorEditing)
                         .frame(minWidth: 260, idealWidth: 300, maxWidth: 360, maxHeight: .infinity)
                 }
             }
@@ -98,7 +106,8 @@ struct TableTabView: View {
                 filterRequest: model.filterRequest,
                 filterPopoverContent: { column, dismiss in popoverContent(column: column, dismiss: dismiss) },
                 actions: gridActions,
-                focusToken: gridFocus)
+                focusToken: gridFocus,
+                editRequest: model.editRequest)
                 .opacity(model.isLoading && model.content != nil ? 0.55 : 1)
                 .accessibilityLabel("Rows of \(model.table.name)")
 
@@ -135,6 +144,14 @@ struct TableTabView: View {
                 .accessibilityLabel("Loading rows")
             }
         }
+        .overlay(alignment: .bottom) {
+            if let toast = model.toast {
+                ToastView(toast: toast)
+                    .padding(.bottom, 14)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: model.toast)
     }
 
     private var gridActions: GridActions {
@@ -157,6 +174,48 @@ struct TableTabView: View {
                 if !model.selectedRows.isEmpty {
                     model.inspectorFocusColumn = model.activeColumn
                     model.inspectorVisible = true
+                }
+            },
+            editing: gridEditing,
+            onEditRequestConsumed: { model.editRequest = nil })
+    }
+
+    private var gridEditing: GridEditing? {
+        guard model.content != nil else { return nil }
+        return GridEditing(
+            isEditable: model.canEdit,
+            info: { model.editInfo(displayRow: $0, column: $1) },
+            commitText: { model.applyText(displayRow: $0, column: $1, text: $2) },
+            setNull: { model.setNull(displayRow: $0, column: $1) },
+            setEmpty: { model.setEmpty(displayRow: $0, column: $1) },
+            setDefault: { model.setDefault(displayRow: $0, column: $1) },
+            revertCell: { model.revertCell(displayRow: $0, column: $1) },
+            clearCell: { model.clearCell(displayRow: $0, column: $1) },
+            deleteRows: { model.deleteRows($0) },
+            duplicateRows: { model.duplicateRows($0) },
+            revertRows: { model.revertRows($0) },
+            rowHasPending: { model.rowHasPendingChanges($0) },
+            notice: { model.show(toast: $0, isError: true) })
+    }
+
+    /// Inspector editing for the first selected row; nil when the table can't be edited.
+    private var inspectorEditing: InspectorEditing? {
+        guard model.canEdit, let row = model.selectedRows.first else { return nil }
+        return InspectorEditing(
+            info: { model.editInfo(displayRow: row, column: $0) },
+            commitText: { model.applyText(displayRow: row, column: $0, text: $1) },
+            setNull: { model.setNull(displayRow: row, column: $0) },
+            revertCell: { model.revertCell(displayRow: row, column: $0) },
+            pendingSQL: model.pendingSQL(forDisplayRow: row),
+            pendingCount: model.pendingEditCount,
+            isCommitting: model.isCommitting,
+            onDiscard: { model.revertRows([row]) },
+            onCommit: {
+                // One row's SQL is on screen already; with other changes pending, show them all first.
+                if (model.editSession?.changeCount ?? 0) > 1 {
+                    model.reviewPresented = true
+                } else {
+                    Task { await model.commit() }
                 }
             })
     }
@@ -211,6 +270,7 @@ struct TableTabView: View {
                     .labelStyle(.titleAndIcon)
                     .accessibilityLabel("Writes need confirmation on production")
             }
+            rowButtons
             Spacer(minLength: 8)
             FooterButton(title: "Export…") {}.disabled(true).help("Export arrives in Phase 7")
             HStack(spacing: 4) {
@@ -238,6 +298,21 @@ struct TableTabView: View {
         .padding(.vertical, 8)
         .background(Theme.sidebar)
         .overlay(alignment: .top) { Theme.separator.frame(height: 1) }
+    }
+
+    private var rowButtons: some View {
+        HStack(spacing: 4) {
+            FooterButton(systemImage: "plus", label: "Add row") { model.addRow() }
+                .disabled(!model.canEdit)
+                .help("Add row (⌥⌘N)")
+            FooterButton(systemImage: "minus", label: "Delete selected rows") { model.deleteRows(model.selectedRows) }
+                .disabled(!model.canEdit || model.selectedRows.isEmpty)
+                .help("Delete selected rows (⌘⌫)")
+            FooterButton(systemImage: "plus.square.on.square", label: "Duplicate selected rows") { model.duplicateRows(model.selectedRows) }
+                .disabled(!model.canEdit || model.selectedRows.isEmpty)
+                .help("Duplicate selected rows (⌘D)")
+        }
+        .opacity(model.editBlock == nil || model.structure == nil ? 1 : 0.7)
     }
 
     private var simpleFooter: some View {
@@ -279,6 +354,10 @@ struct TableTabView: View {
             .keyboardShortcut("f", modifiers: [.command, .option])
             Button("Focus grid") { gridFocus += 1 }
                 .keyboardShortcut("g", modifiers: [.command, .option])
+            Button("Add row") { if model.canEdit { model.mode = .data; model.addRow() } }
+                .keyboardShortcut("n", modifiers: [.command, .option])
+            Button("Review changes") { if model.hasPendingChanges { model.reviewPresented = true } }
+                .keyboardShortcut("s", modifiers: .command)
         }
         .opacity(0)
         .frame(width: 0, height: 0)

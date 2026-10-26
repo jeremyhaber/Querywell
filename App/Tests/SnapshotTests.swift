@@ -145,6 +145,16 @@ struct SnapshotTests {
               PRIMARY KEY (meta_id), KEY post_id (post_id), KEY meta_key (meta_key(191))
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """,
+            """
+            CREATE TABLE IF NOT EXISTS qw_legacy_myisam (
+              id int NOT NULL AUTO_INCREMENT, body text, PRIMARY KEY (id), FULLTEXT KEY body_ft (body)
+            ) ENGINE=MyISAM DEFAULT CHARSET=utf8mb3
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS qw_legacy_utf8 (
+              id int NOT NULL AUTO_INCREMENT, label varchar(255) DEFAULT NULL, PRIMARY KEY (id), KEY label_idx (label)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3
+            """,
             "REPLACE INTO wp_users (ID, user_login, user_email, display_name, user_registered) VALUES "
                 + "(1, 'jeremy', 'jeremy@example.com', 'Jeremy Haber', '2019-03-02 10:00:00'), "
                 + "(2, 'admin', 'admin@example.com', 'Site Admin', '2018-01-15 09:30:00'), "
@@ -330,5 +340,124 @@ struct SnapshotTests {
         #expect(await model.connect(profileID: id) == nil)
         await model.closeWorkspace(id: workspaceID)
         #expect(workspace.live == nil || workspace.isClosed)
+    }
+
+    // MARK: Editing UI
+
+    /// Hosts `view` in a key window so sheet-style controls render as they do for the user.
+    private func renderSheet<V: View>(_ view: V, model: AppModel, size: CGSize, name: String) async throws {
+        try await render(view.frame(width: size.width, height: size.height), model: model, size: size, name: name,
+                         prepare: { window in window.makeKeyAndOrderFront(nil) })
+    }
+
+    @Test func editingScreensAndEndToEndCommit() async throws {
+        let (model, dir) = try await makeModel()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let id = try await seed(model)
+        let workspaceID = try #require(await model.connect(profileID: id))
+        let workspace = try #require(model.workspaces[workspaceID])
+        await workspace.connect()
+        let session = try #require(workspace.live?.session)
+        try await createWordPressFixture(session)
+        workspace.refreshSchema()
+        try await waitUntil { workspace.browser.current?.tables.contains { $0.ref.name == "qw_legacy_myisam" } == true }
+        workspace.gate.confirmationHandler = { _ in true }  // tests bypass the sheet
+
+        // --- End to end: edit, commit, verify in the database. ---
+        let schema = "querywell_test"
+        workspace.openTable(TableRef(schema: schema, name: "wp_users"))
+        let users = try #require(workspace.tableModel(forTable: TableRef(schema: schema, name: "wp_users")))
+        users.loadIfNeeded(epoch: workspace.connectionEpoch)
+        try await waitUntil { users.content != nil && !users.isLoading }
+        let row = try #require(users.content?.rows.firstIndex { $0[0] == .unsignedInteger(3) || $0[0] == .integer(3) })
+        let original = try #require(users.content?.rows[row][3])
+        _ = try await session.execute("UPDATE wp_users SET display_name = 'Ed Itor' WHERE ID = 3")
+        users.reload()
+        try await waitUntil { !users.isLoading && users.content?.rows[row][3] == .text("Ed Itor") }
+        #expect(users.applyText(displayRow: row, column: "display_name", text: "Edited by Querywell") == nil)
+        #expect(users.pendingEditCount == 1)
+        let report = await users.commit()
+        #expect(report?.isSuccess == true)
+        var check = try await session.execute("SELECT display_name FROM wp_users WHERE ID = 3")
+        #expect(check.rows.first?.first == .text("Edited by Querywell"))
+
+        // Conflict: someone else changes the row between load and commit.
+        try await waitUntil { !users.isLoading && users.content?.rows[row][3] == .text("Edited by Querywell") }
+        #expect(users.applyText(displayRow: row, column: "display_name", text: "Mine") == nil)
+        _ = try await session.execute("UPDATE wp_users SET display_name = 'Theirs' WHERE ID = 3")
+        let conflict = await users.commit()
+        #expect(conflict?.status == .conflict)
+        #expect(conflict?.headline.contains("was changed by someone else") == true)
+        check = try await session.execute("SELECT display_name FROM wp_users WHERE ID = 3")
+        #expect(check.rows.first?.first == .text("Theirs"))
+        #expect(users.hasPendingChanges)
+        users.discardAll()
+        _ = try await session.execute("UPDATE wp_users SET display_name = 'Ed Itor' WHERE ID = 3")
+        _ = original
+
+        // --- Screens. ---
+        workspace.openTable(TableRef(schema: schema, name: "wp_posts"))
+        let posts = try #require(workspace.tableModel(forTable: TableRef(schema: schema, name: "wp_posts")))
+        posts.loadIfNeeded(epoch: workspace.connectionEpoch)
+        try await waitUntil { posts.content?.rows.count == 50 && !posts.isLoading }
+        workspace.browser.select("wp_posts", command: false, shift: false, visible: ["wp_posts"])
+        let titleRow = 1
+        #expect(posts.applyText(displayRow: titleRow, column: "post_title", text: "Services (updated)") == nil)
+        #expect(posts.applyText(displayRow: 2, column: "post_status", text: "draft") == nil)
+        posts.deleteRows([4])
+        posts.addRow()
+        #expect(posts.applyText(displayRow: 0, column: "post_title", text: "Brand new page") == nil)
+        posts.editRequest = nil
+        #expect(posts.pendingEditCount == 4)
+        let size = CGSize(width: 1700, height: 760)
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "edit-grid", prepare: { window in
+            if let table = Self.findView(GridTableView.self, in: window.contentView!) { table.selectRowIndexes([2], byExtendingSelection: false) }
+        })
+
+        posts.inspectorFocusColumn = "post_type"
+        posts.inspectorVisible = true
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "edit-inspector", prepare: { window in
+            if let table = Self.findView(GridTableView.self, in: window.contentView!) { table.selectRowIndexes([2], byExtendingSelection: false) }
+        })
+        posts.inspectorVisible = false
+
+        try await renderSheet(ReviewChangesSheet(model: posts) {}, model: model, size: CGSize(width: 660, height: 640), name: "edit-review")
+
+        // A failed commit shows the explanation inside the sheet.
+        posts.commitReport = CommitReport(
+            status: .conflict, headline: "Row ID 1040 was changed by someone else since you loaded it — nothing was saved.",
+            detail: "Reload the table to see the current values, or discard your edits. Your pending edits are still here.",
+            statement: "UPDATE `querywell_test`.`wp_posts` SET `post_title` = 'Services (updated)' WHERE `ID` = 1040 AND `post_title` = 'About'")
+        try await renderSheet(ReviewChangesSheet(model: posts) {}, model: model, size: CGSize(width: 660, height: 700), name: "edit-review-conflict")
+        posts.commitReport = nil
+        posts.discardAll()
+
+        // Destructive PROD confirmation with real dry-run counts and the typed-name field.
+        let decision = try #require(workspace.gate.decision(
+            for: ["TRUNCATE TABLE `querywell_test`.`wp_postmeta`", "DELETE FROM `querywell_test`.`wp_posts` WHERE post_status = 'trash'"],
+            escalateToDestructive: true, database: schema))
+        guard case .confirm(let request) = decision else { Issue.record("expected confirm"); return }
+        let results = await DryRunExecutor.run(request.dryRuns, on: session)
+        #expect(results.first?.count == 120)
+        try await renderSheet(
+            WriteConfirmationSheet(request: request, session: session, actionTitle: "Run 2 statements", initialResults: results) { _ in },
+            model: model, size: CGSize(width: 560, height: 560), name: "confirm-destructive-prod")
+
+        // Batch operations: MyISAM and utf8mb3 fixtures with a plan and warnings.
+        let infos = try await SchemaInspectorFactory.inspector(for: session).listTables(schema: schema)
+            .filter { ["qw_legacy_myisam", "qw_legacy_utf8", "wp_users", "wp_posts"].contains($0.ref.name) }
+        let batch = BatchOperationsModel(
+            schema: schema, tables: infos, server: session.serverInfo,
+            inspector: SchemaInspectorFactory.inspector(for: session), session: session, gate: workspace.gate)
+        await batch.loadMetadata()
+        #expect(batch.skipReasons[TableRef(schema: schema, name: "wp_users")] == "Already InnoDB")
+        #expect(batch.statementCount == 1)
+        #expect(batch.plan?.warnings.isEmpty == false)
+        try await renderSheet(BatchOperationsSheet(model: batch) {}, model: model, size: CGSize(width: 740, height: 680), name: "batch-engine")
+        batch.operation = .convert
+        try await renderSheet(BatchOperationsSheet(model: batch) {}, model: model, size: CGSize(width: 740, height: 680), name: "batch-convert")
+        #expect(batch.plan?.statements.contains { $0.contains("qw_legacy_utf8") } == true)
+
+        await model.closeWorkspace(id: workspaceID)
     }
 }

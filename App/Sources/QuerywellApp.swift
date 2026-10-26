@@ -54,6 +54,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// about three seconds so a hung server can't block quitting.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model = Self.model, !model.workspaces.isEmpty else { return .terminateNow }
+        if let dirty = model.workspaces.values.first(where: \.hasUnsavedEdits), let detail = dirty.unsavedEditsDescription {
+            let alert = NSAlert()
+            alert.messageText = "You have unsaved edits"
+            alert.informativeText = "\(detail) in “\(dirty.title)”. If you quit they are lost."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Review Changes")
+            alert.addButton(withTitle: "Quit and Discard")
+            alert.addButton(withTitle: "Cancel")
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                dirty.bringToFront()
+                dirty.reviewFirstUnsaved()
+                return .terminateCancel
+            }
+            if response != .alertSecondButtonReturn { return .terminateCancel }
+        }
         var replied = false
         let reply: @MainActor () -> Void = {
             guard !replied else { return }

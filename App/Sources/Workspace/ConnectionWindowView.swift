@@ -72,12 +72,33 @@ struct ConnectionWindowContent: View {
                                 "The database connection\(workspace.profile.ssh != nil ? " and its SSH tunnel" : "") will be closed. Unsaved work in this window is lost."
                             )
                         },
+                        unsavedEdits: { [workspace] in workspace.unsavedEditsDescription },
+                        reviewUnsaved: { [workspace] in workspace.reviewFirstUnsaved() },
+                        discardUnsaved: { [workspace] in workspace.discardAllUnsavedEdits() },
                         didClose: { [workspace, model] in
                             Task { await model.closeWorkspace(id: workspace.id) }
                         })
                 })
             .focusedSceneValue(\.windowActions, windowActions)
             .task { await workspace.startIfNeeded() }
+            .onAppear { workspace.safety = model.settings.safety }
+            .onChange(of: model.settings.safety) { _, new in workspace.safety = new }
+            .confirmationDialog(
+                workspace.closePrompt.map { "“\($0.title)” has unsaved edits" } ?? "Unsaved edits",
+                isPresented: Binding(get: { workspace.closePrompt != nil }, set: { if !$0 { workspace.closePrompt = nil } }),
+                titleVisibility: .visible, presenting: workspace.closePrompt
+            ) { _ in
+                Button("Review Changes") { workspace.resolveClosePrompt(.review) }
+                Button("Discard Edits", role: .destructive) { workspace.resolveClosePrompt(.discard) }
+                Button("Cancel", role: .cancel) { workspace.resolveClosePrompt(.cancel) }
+            } message: { prompt in
+                Text("\(prompt.summary) will be lost if you close this tab.")
+            }
+            .sheet(isPresented: Binding(get: { workspace.batchOperations != nil }, set: { if !$0 { workspace.batchOperations = nil } })) {
+                if let ops = workspace.batchOperations {
+                    BatchOperationsSheet(model: ops) { workspace.batchOperations = nil }
+                }
+            }
             .appAlert()
     }
 

@@ -1,11 +1,27 @@
 import QuerywellCore
 import SwiftUI
 
+/// Everything the inspector needs to edit the selected row. `nil` on the view = read-only.
+struct InspectorEditing {
+    /// Per-column editing facts for the selected row.
+    var info: (String) -> CellEditInfo
+    /// Returns why the text was rejected, nil when it was recorded.
+    var commitText: (String, String) -> CellInputError?
+    var setNull: (String) -> Void
+    var revertCell: (String) -> Void
+    /// The SQL the selected row will run on commit (design: PENDING SQL).
+    var pendingSQL: String?
+    /// Total unsaved edits in the table ("Commit 2").
+    var pendingCount: Int
+    var isCommitting: Bool
+    var onDiscard: () -> Void
+    var onCommit: () -> Void
+}
+
 /// Right-hand panel for the selected row (design: Main.dc.html, "Row inspector").
 ///
-/// Read-only for now. The edit work plugs in through ``onEdit``: when non-nil each field becomes editable
-/// and reports `(column, newValue)`; the "pending" styling (`Theme.pendingEdit*`) and the PENDING SQL box
-/// from the mockup belong in ``InspectorField`` / below the fields.
+/// Read-only unless `editing` is set: then each field edits in place (changes become pending edits,
+/// drawn with the amber styling) and the PENDING SQL box with Discard / Commit N appears below.
 struct RowInspectorView: View {
     var title: String
     var subtitle: String?
@@ -14,8 +30,7 @@ struct RowInspectorView: View {
     var focusColumn: String?
     var nullDisplay: String
     var onClose: () -> Void
-    /// `nil` = read-only (this commit). Set by the editing feature.
-    var onEdit: ((String, DatabaseValue) -> Void)? = nil
+    var editing: InspectorEditing?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -46,9 +61,10 @@ struct RowInspectorView: View {
                                 InspectorField(
                                     column: column, value: values[index], nullDisplay: nullDisplay,
                                     isFocused: focusColumn?.caseInsensitiveCompare(column.name) == .orderedSame,
-                                    onEdit: onEdit)
+                                    editing: editing)
                                     .id(column.name)
                             }
+                            if let editing, editing.pendingCount > 0 { pendingSection(editing) }
                         }
                         .padding(.horizontal, 16)
                         .padding(.bottom, 16)
@@ -70,6 +86,44 @@ struct RowInspectorView: View {
         .accessibilityLabel("Row inspector")
     }
 
+    private func pendingSection(_ editing: InspectorEditing) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let sql = editing.pendingSQL {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("PENDING SQL")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    Text(sql)
+                        .font(.system(size: 11, design: .monospaced))
+                        .lineSpacing(3)
+                        .foregroundStyle(Theme.text)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(10)
+                .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+                .overlay(RoundedRectangle(cornerRadius: Theme.controlRadius).strokeBorder(Theme.separator))
+                .accessibilityElement(children: .combine)
+            }
+            HStack(spacing: 8) {
+                Button(action: editing.onDiscard) {
+                    Text("Discard").frame(maxWidth: .infinity, minHeight: 22)
+                }
+                .buttonStyle(OutlineButtonStyle())
+                .disabled(editing.isCommitting)
+                .help("Discard this row's pending changes")
+                Button(action: editing.onCommit) {
+                    Text("Commit \(editing.pendingCount)").frame(maxWidth: .infinity, minHeight: 22)
+                }
+                .buttonStyle(AccentFillButtonStyle())
+                .disabled(editing.isCommitting)
+                .help("Commit all \(editing.pendingCount) unsaved edits")
+            }
+            .font(.system(size: 13, weight: .medium))
+        }
+        .padding(.top, 2)
+    }
+
     private func scroll(_ proxy: ScrollViewProxy) {
         guard let focusColumn else { return }
         withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(focusColumn, anchor: .center) }
@@ -77,17 +131,26 @@ struct RowInspectorView: View {
 }
 
 /// One labelled value. Short values are one line; long text and JSON get a multiline monospaced box.
+/// With `editing` the box is an editor; an edited value gets the amber pending styling.
 struct InspectorField: View {
     var column: GridColumn
     var value: DatabaseValue
     var nullDisplay: String
     var isFocused: Bool
-    var onEdit: ((String, DatabaseValue) -> Void)?
+    var editing: InspectorEditing?
 
+    @State private var draft = ""
+    @State private var error: String?
+    @FocusState private var fieldFocused: Bool
+
+    private var info: CellEditInfo? { editing?.info(column.name) }
+    private var canEdit: Bool { info?.canEdit == true }
+    private var isEdited: Bool { info?.isEdited == true }
     private var fullText: String { CellDisplay.full(value, limit: 20_000) }
+    private var sourceText: String { CellValueParser.editingText(for: value) }
 
     private var isMultiline: Bool {
-        guard case .text(let s) = value else { return false }
+        guard case .text(let s) = value else { return column.presentation.kind == .json || column.presentation.kind == .longText }
         return s.contains("\n") || s.count > 60 || column.presentation.kind == .json || column.presentation.kind == .longText
     }
 
@@ -105,17 +168,88 @@ struct InspectorField: View {
                 Text(column.name).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                 Text(column.fullType).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 Spacer(minLength: 0)
+                if canEdit {
+                    if isEdited {
+                        Button("Revert") { editing?.revertCell(column.name) }
+                            .controlSize(.mini).help("Undo the edit of \(column.name)")
+                    }
+                    if info?.isNullable == true, !(info?.currentIsNull ?? false) {
+                        Button("NULL") { editing?.setNull(column.name) }
+                            .controlSize(.mini).help("Set \(column.name) to NULL")
+                    }
+                }
                 if isStructured {
                     // Phase 6 brings the JSON / serialized-PHP editor.
                     Button("Open in editor") {}.controlSize(.mini).disabled(true).help("Phase 6")
                 }
             }
-            // `onEdit != nil` is where editable controls replace this read-only box.
-            box
+            if canEdit, let info { editor(info) } else { box }
+            if let error {
+                Text(error).font(.system(size: 11)).foregroundStyle(Theme.dangerText).fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(column.name): \(value.isNull ? "null" : CellDisplay.text(value, nullDisplay: nullDisplay))")
+        .accessibilityElement(children: canEdit ? .contain : .combine)
+        .accessibilityLabel("\(column.name): \(value.isNull ? "null" : CellDisplay.text(value, nullDisplay: nullDisplay))\(isEdited ? ", edited" : "")")
+        .onAppear { draft = sourceText }
+        .onChange(of: value) { _, _ in
+            draft = sourceText
+            error = nil
+        }
     }
+
+    // MARK: Editing
+
+    @ViewBuilder
+    private func editor(_ info: CellEditInfo) -> some View {
+        if info.usesPicker {
+            picker(info)
+        } else if isMultiline || info.prefersInspector {
+            TextEditor(text: $draft)
+                .font(.system(size: 12, design: .monospaced))
+                .scrollContentBackground(.hidden)
+                .frame(height: 130)
+                .padding(4)
+                .modifier(FieldChrome(isEdited: isEdited, isFocused: isFocused || fieldFocused, hasError: error != nil))
+                .focused($fieldFocused)
+                .onChange(of: fieldFocused) { _, focused in if !focused { commit() } }
+                .accessibilityLabel(column.name)
+        } else {
+            TextField(value.isNull ? nullDisplay : "", text: $draft)
+                .textFieldStyle(.plain)
+                .font(column.presentation.usesMonospace ? .system(size: 12, design: .monospaced) : .system(size: 13))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 7)
+                .modifier(FieldChrome(isEdited: isEdited, isFocused: isFocused || fieldFocused, hasError: error != nil))
+                .focused($fieldFocused)
+                .onSubmit { commit() }
+                .onChange(of: fieldFocused) { _, focused in if !focused { commit() } }
+                .accessibilityLabel(column.name)
+        }
+    }
+
+    private func picker(_ info: CellEditInfo) -> some View {
+        let current = value.isNull ? "\u{0}NULL" : sourceText
+        return Picker(column.name, selection: Binding(
+            get: { current },
+            set: { choice in
+                if choice == "\u{0}NULL" { editing?.setNull(column.name) } else { error = editing?.commitText(column.name, choice)?.message }
+            })
+        ) {
+            ForEach(info.choices, id: \.self) { Text($0).tag($0) }
+            if info.isNullable { Text("NULL").tag("\u{0}NULL") }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .modifier(FieldChrome(isEdited: isEdited, isFocused: isFocused, hasError: false))
+    }
+
+    private func commit() {
+        guard canEdit, draft != sourceText else { return }
+        error = editing?.commitText(column.name, draft)?.message
+    }
+
+    // MARK: Read-only box
 
     @ViewBuilder
     private var box: some View {
@@ -139,5 +273,26 @@ struct InspectorField: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.background, in: RoundedRectangle(cornerRadius: Theme.smallRadius))
         .overlay(RoundedRectangle(cornerRadius: Theme.smallRadius).strokeBorder(isFocused ? Theme.accent : Theme.separator, lineWidth: isFocused ? 1.5 : 1))
+    }
+}
+
+/// Box styling shared by the inspector's editors: amber when the value has a pending edit.
+private struct FieldChrome: ViewModifier {
+    var isEdited: Bool
+    var isFocused: Bool
+    var hasError: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .background(isEdited ? Theme.pendingFieldBackground : Theme.background, in: RoundedRectangle(cornerRadius: Theme.smallRadius))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.smallRadius)
+                    .strokeBorder(border, lineWidth: isFocused || hasError ? 1.5 : 1))
+    }
+
+    private var border: Color {
+        if hasError { return Theme.dangerText }
+        if isFocused { return Theme.accent }
+        return isEdited ? Theme.pendingPillBorder : Theme.separator
     }
 }

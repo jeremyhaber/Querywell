@@ -27,6 +27,14 @@ final class ConnectionWorkspace: Identifiable {
     let browser = SchemaBrowserModel()
     /// Bumped on every successful (re)connect; table tabs reload when it changes.
     private(set) var connectionEpoch = 0
+    /// Every write in this window goes through here (inline edits, truncate/drop, batch operations).
+    let gate = WriteGate()
+    /// Safety settings, kept current by the window (`AppSettings.safety`).
+    var safety = AppSettings.Safety()
+    /// A tab with unsaved edits is being closed: asks Review / Discard / Cancel.
+    var closePrompt: TabClosePrompt?
+    /// The open "Table Operations" sheet, if any.
+    var batchOperations: BatchOperationsModel?
 
     @ObservationIgnored private(set) var live: LiveConnection?
     @ObservationIgnored weak var window: NSWindow?
@@ -42,6 +50,13 @@ final class ConnectionWorkspace: Identifiable {
         self.profile = profile
         self.opener = opener
         self.keepaliveInterval = keepaliveInterval
+        gate.contextProvider = { [weak self] database in
+            guard let self else { return nil }
+            return GuardContext(profile: self.profile, currentDatabase: database ?? self.browser.selectedSchema ?? self.selectedDatabase)
+        }
+        gate.settingsProvider = { [weak self] in self?.safety ?? AppSettings.Safety() }
+        gate.sessionProvider = { [weak self] in self?.live?.session }
+        gate.windowProvider = { [weak self] in self?.window }
     }
 
     // MARK: Derived
@@ -220,8 +235,149 @@ final class ConnectionWorkspace: Identifiable {
     @discardableResult
     func closeSelectedTab() -> Bool {
         guard let id = tabs.selectedID else { return false }
-        tabs.close(id: id)
+        requestClose(tab: id)
         return true
+    }
+
+    // MARK: Unsaved edits
+
+    /// Table models with pending edits, in tab order.
+    var modelsWithUnsavedEdits: [(tab: WorkspaceTab, model: TableDataModel)] {
+        tabs.tabs.compactMap { tab in
+            guard let model = tableModels[tab.id], model.hasPendingChanges else { return nil }
+            return (tab, model)
+        }
+    }
+
+    var hasUnsavedEdits: Bool { !modelsWithUnsavedEdits.isEmpty }
+
+    /// "3 unsaved edits in wp_posts and 1 other table" for close / quit prompts.
+    var unsavedEditsDescription: String? {
+        let dirty = modelsWithUnsavedEdits
+        guard let first = dirty.first else { return nil }
+        let total = dirty.reduce(0) { $0 + $1.model.pendingEditCount }
+        let others = dirty.count - 1
+        let where_ = others == 0 ? "“\(first.tab.title)”" : "“\(first.tab.title)” and \(others) other table\(others == 1 ? "" : "s")"
+        return "\(total) unsaved edit\(total == 1 ? "" : "s") in \(where_)"
+    }
+
+    /// Closes a tab, first asking what to do with its unsaved edits.
+    func requestClose(tab id: WorkspaceTab.ID) {
+        guard let tab = tabs.tab(id: id) else { return }
+        if let model = tableModels[id], model.hasPendingChanges {
+            tabs.select(id: id)
+            closePrompt = TabClosePrompt(tabID: id, title: tab.title, summary: model.pendingSummary)
+            return
+        }
+        tabs.close(id: id)
+    }
+
+    /// Resolves the close prompt.
+    func resolveClosePrompt(_ choice: TabClosePrompt.Choice) {
+        guard let prompt = closePrompt else { return }
+        closePrompt = nil
+        switch choice {
+        case .review:
+            tabs.select(id: prompt.tabID)
+            tableModels[prompt.tabID]?.reviewPresented = true
+        case .discard:
+            tableModels[prompt.tabID]?.discardAll()
+            tabs.close(id: prompt.tabID)
+        case .cancel:
+            break
+        }
+    }
+
+    /// Selects the first tab with unsaved edits and opens its Review sheet.
+    func reviewFirstUnsaved() {
+        guard let first = modelsWithUnsavedEdits.first else { return }
+        tabs.select(id: first.tab.id)
+        first.model.reviewPresented = true
+    }
+
+    func discardAllUnsavedEdits() {
+        for entry in modelsWithUnsavedEdits { entry.model.discardAll() }
+    }
+
+    // MARK: Destructive table actions
+
+    struct DestructiveOutcome: Equatable {
+        /// Statements that ran.
+        var completed = 0
+        /// The statement that failed and the server's message; later statements were not run.
+        var failure: (statement: String, message: String)?
+        var declined = false
+
+        static func == (a: Self, b: Self) -> Bool {
+            a.completed == b.completed && a.declined == b.declined && a.failure?.statement == b.failure?.statement
+                && a.failure?.message == b.failure?.message
+        }
+    }
+
+    /// `TRUNCATE` for each table, through the write gate (typed database name on production).
+    func truncate(_ tables: [TableInfo]) async -> DestructiveOutcome {
+        guard let dialect = live.map({ SQLDialect($0.session.engine) }) else { return DestructiveOutcome(declined: true) }
+        let statements = TableOperations.truncate(tables, dialect: dialect)
+        let outcome = await runDestructive(statements, schema: tables.first?.ref.schema, title: "Empty")
+        let real = tables.filter { $0.kind == .table }
+        for info in real.prefix(outcome.completed) {
+            if let model = tableModel(forTable: info.ref) {
+                model.discardAll()
+                model.reload()
+            }
+        }
+        browser.reloadCurrent()
+        return outcome
+    }
+
+    /// `DROP` for each table or view; their tabs close and the sidebar refreshes.
+    func drop(_ tables: [TableInfo]) async -> DestructiveOutcome {
+        guard let dialect = live.map({ SQLDialect($0.session.engine) }) else { return DestructiveOutcome(declined: true) }
+        let statements = TableOperations.drop(tables, dialect: dialect)
+        let outcome = await runDestructive(statements, schema: tables.first?.ref.schema, title: "Drop")
+        for info in tables.prefix(outcome.completed) {
+            for tab in tabs.tabs where tab.kind == .table(database: info.ref.schema, name: info.ref.name) {
+                tableModels[tab.id]?.discardAll()
+                tabs.close(id: tab.id)
+            }
+        }
+        browser.selectedTables = []
+        browser.reloadCurrent()
+        return outcome
+    }
+
+    private func runDestructive(_ statements: [String], schema: String?, title: String) async -> DestructiveOutcome {
+        guard !statements.isEmpty, let session = live?.session else { return DestructiveOutcome(declined: true) }
+        let noun = statements.count == 1 ? "" : " \(statements.count) objects"
+        guard await gate.authorize(statements: statements, escalateToDestructive: true, database: schema, actionTitle: title + noun) else {
+            return DestructiveOutcome(declined: true)
+        }
+        var outcome = DestructiveOutcome()
+        for sql in statements {
+            do {
+                _ = try await session.execute(sql)
+                outcome.completed += 1
+            } catch {
+                outcome.failure = (sql, SchemaBrowserModel.message(error))
+                break
+            }
+        }
+        return outcome
+    }
+
+    // MARK: Table operations sheet
+
+    /// Opens the batch engine / charset sheet for `tables` (MySQL / MariaDB only).
+    func presentTableOperations(for tables: [TableInfo]) {
+        guard let schema = browser.selectedSchema, let server = serverInfo, let live,
+              BatchOperationsModel.unsupportedReason(for: profile.engine) == nil, !tables.isEmpty else { return }
+        let model = BatchOperationsModel(
+            schema: schema, tables: tables, server: server, inspector: browser.inspector, session: live.session, gate: gate)
+        model.onFinished = { [weak self] in
+            guard let self else { return }
+            self.refreshSchema()
+        }
+        batchOperations = model
     }
 
     /// ⌘1…⌘9: selects the tab at `index` (0-based) if it exists.
@@ -251,6 +407,10 @@ final class ConnectionWorkspace: Identifiable {
         model.savedFiltersStore = savedFiltersStore
         model.connectionID = profile.id
         model.openTable = { [weak self] ref, filter in self?.openTable(ref, filter: filter) }
+        model.gate = gate
+        model.isReadOnlyProvider = { [weak self] in self?.profile.effectiveReadOnly ?? false }
+        let tabID = tab.id
+        model.onDirtyChange = { [weak self] dirty in self?.tabs.setDirty(id: tabID, dirty) }
         tableModels[tab.id] = model
         return model
     }
@@ -275,4 +435,14 @@ final class ConnectionWorkspace: Identifiable {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }
+}
+
+
+/// "Close the tab with unsaved edits?" state.
+struct TabClosePrompt: Identifiable, Equatable {
+    enum Choice { case review, discard, cancel }
+    var tabID: UUID
+    var title: String
+    var summary: String
+    var id: UUID { tabID }
 }
