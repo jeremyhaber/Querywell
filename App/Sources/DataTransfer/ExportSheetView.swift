@@ -185,7 +185,7 @@ struct ExportSheetView: View {
         HStack(spacing: 12) {
             SectionLabel("Tables")
             Text(model.tablesSummary).font(.system(size: 13))
-            Button(showTables ? "Done" : "Choose…") { withAnimation(.easeOut(duration: 0.15)) { showTables.toggle() } }
+            Button(showTables ? "Done" : "Choose…") { Motion.animate { showTables.toggle() } }
                 .buttonStyle(.link).font(.system(size: 13))
             if !showTables, model.structureOnlyCount > 0 {
                 Text("· structure only for \(model.structureOnlyCount)").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
@@ -207,7 +207,7 @@ struct ExportSheetView: View {
     private var commandPreview: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { showCommand.toggle() }
+                Motion.animate { showCommand.toggle() }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: showCommand ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold))

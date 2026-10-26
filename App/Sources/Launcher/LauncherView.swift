@@ -276,7 +276,7 @@ struct LauncherView: View {
                 .focused($gridFocused)
                 .onKeyPress(phases: [.down, .repeat]) { press in handleKey(press, profiles: profiles) }
                 .onChange(of: selection) { _, new in
-                    if let new { withAnimation(.snappy(duration: 0.15)) { proxy.scrollTo(new) } }
+                    if let new { Motion.animate(.snappy(duration: 0.15)) { proxy.scrollTo(new) } }
                 }
             }
             .onChange(of: geo.size.width, initial: true) { _, width in

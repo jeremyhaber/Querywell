@@ -128,7 +128,7 @@ struct RowInspectorView: View {
 
     private func scroll(_ proxy: ScrollViewProxy) {
         guard let focusColumn else { return }
-        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(focusColumn, anchor: .center) }
+        Motion.animate { proxy.scrollTo(focusColumn, anchor: .center) }
     }
 }
 

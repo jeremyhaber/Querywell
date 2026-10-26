@@ -161,7 +161,7 @@ struct TableTabView: View {
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .animation(.easeOut(duration: 0.18), value: model.toast)
+        .motionAnimation(.easeOut(duration: 0.18), value: model.toast)
     }
 
     private var gridActions: GridActions {
