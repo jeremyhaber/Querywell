@@ -49,14 +49,19 @@ public struct ExportOptions: Sendable, Equatable {
     /// MySQL `--hex-blob`: binary columns as `0x…` literals.
     public var hexBlob: Bool
     public var location: ExportLocation
+    /// PostgreSQL: the schema to dump. `pg_dump` otherwise dumps every schema of the database, so table names
+    /// (`tables`, `tableModes`) are qualified with it and `--schema` limits the run. Ignored by MySQL/MariaDB,
+    /// whose "schema" is the target database itself.
+    public var schema: String?
 
     public init(
         scope: ExportScope = .structureAndData, singleTransaction: Bool = true, addDropTable: Bool = true,
         gzip: Bool = true, tables: [String]? = nil, skipWordPressTransients: Bool = false, optionsTables: [String] = [],
         includeRoutines: Bool = false, includeTriggers: Bool = true, includeEvents: Bool = false,
         collation: CollationMapping? = nil, extendedInserts: Bool = true, hexBlob: Bool = false,
-        location: ExportLocation = .remoteOverSSH, tableModes: [String: TableExportMode] = [:]
+        location: ExportLocation = .remoteOverSSH, tableModes: [String: TableExportMode] = [:], schema: String? = nil
     ) {
+        self.schema = schema
         self.scope = scope
         self.singleTransaction = singleTransaction
         self.addDropTable = addDropTable
@@ -398,7 +403,13 @@ public enum ExportPlanner {
             return names.filter(universe.contains)
         }
         let structure = members(.structureOnly), dataOnly = members(.dataOnly), skipped = members(.skip)
+        // `-t`/`-T`/`--exclude-table-data` match patterns: quote both parts so case and punctuation are literal.
+        func pattern(_ table: String) -> String {
+            func quoted(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+            return o.schema.map { quoted($0) + "." + quoted(table) } ?? table
+        }
         var main = connection + ["--verbose", "--no-password"]
+        if let schema = o.schema { main.append("--schema=" + "\"" + schema.replacingOccurrences(of: "\"", with: "\"\"") + "\"") }
         switch o.scope {
         case .structureOnly: main.append("--schema-only")
         case .dataOnly: main.append("--data-only")
@@ -408,17 +419,18 @@ public enum ExportPlanner {
         if !o.extendedInserts { main.append("--inserts") }
         let excluded = Set(skipped + dataOnly)
         if let tables = o.tables {
-            for t in tables where !excluded.contains(t) { main += ["-t", t] }
+            for t in tables where !excluded.contains(t) { main += ["-t", pattern(t)] }
         }
-        for t in excluded.sorted() { main += ["-T", t] }
-        if o.scope != .dataOnly, o.scope != .structureOnly { for t in structure { main.append("--exclude-table-data=\(t)") } }
+        for t in excluded.sorted() { main += ["-T", pattern(t)] }
+        if o.scope != .dataOnly, o.scope != .structureOnly { for t in structure { main.append("--exclude-table-data=\(pattern(t))") } }
         var runs: [[String]] = []
         let mainHasTables = o.tables.map { !$0.filter { !excluded.contains($0) }.isEmpty } ?? true
         if mainHasTables { runs.append(main + [database]) }
         if !dataOnly.isEmpty {
             var data = connection + ["--verbose", "--no-password", "--data-only"]
+            if let schema = o.schema { data.append("--schema=" + "\"" + schema.replacingOccurrences(of: "\"", with: "\"\"") + "\"") }
             if !o.extendedInserts { data.append("--inserts") }
-            for t in dataOnly { data += ["-t", t] }
+            for t in dataOnly { data += ["-t", pattern(t)] }
             runs.append(data + [database])
         }
         return runs

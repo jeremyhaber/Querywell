@@ -482,3 +482,25 @@ struct TableModeTests {
         #expect(script.contains("&&"))
     }
 }
+
+@Suite("Postgres export is scoped to one schema")
+struct PostgresSchemaScopeTests {
+    @Test func schemaAndQualifiedPatterns() {
+        var o = ExportOptions(tableModes: ["junk": .skip, "wfhits": .structureOnly, "meta": .dataOnly], schema: "my\"schema")
+        o.location = .localThroughTunnel
+        let runs = ExportPlanner.postgresInvocations(database: "db", options: o, connection: [])
+        let main = runs[0]
+        #expect(main.contains("--schema=\"my\"\"schema\""))
+        #expect(!main.contains("-t"))
+        #expect(zip(main, main.dropFirst()).contains { $0 == "-T" && $1 == "\"my\"\"schema\".\"junk\"" })
+        #expect(main.contains("--exclude-table-data=\"my\"\"schema\".\"wfhits\""))
+        #expect(runs.count == 2 && runs[1].contains("--schema=\"my\"\"schema\"") && runs[1].contains("--data-only"))
+    }
+
+    @Test func withoutASchemaNamesStayAsGiven() {
+        let o = ExportOptions(tableModes: ["junk": .skip])
+        let main = ExportPlanner.postgresInvocations(database: "db", options: o, connection: [])[0]
+        #expect(!main.contains { $0.hasPrefix("--schema") })
+        #expect(zip(main, main.dropFirst()).contains { $0 == "-T" && $1 == "junk" })
+    }
+}

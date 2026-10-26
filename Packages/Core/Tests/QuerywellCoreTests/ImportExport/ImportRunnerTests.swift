@@ -35,6 +35,7 @@ final class RecordingSession: DatabaseSession, @unchecked Sendable {
             return _statements.count
         }
         onExecute?(n)
+        if sql.contains("UNKNOWNPARAM") { throw DatabaseError.query(message: "unrecognized configuration parameter", code: "42704") }
         if sql.contains("FAIL") { throw DatabaseError.query(message: "boom", code: "1064") }
         return QueryResult()
     }
@@ -74,6 +75,22 @@ struct ImportRunnerUnitTests {
         #expect(!session.statements.contains { $0.contains("(3)") })
         // the session is put back into a sane state
         #expect(session.statements.suffix(2) == ["UNLOCK TABLES", "SET FOREIGN_KEY_CHECKS = 1, UNIQUE_CHECKS = 1"])
+    }
+
+    @Test func unknownSettingsFromANewerPgDumpAreIgnoredNotFatal() async throws {
+        let dump = "SET statement_timeout = 0;\nSET UNKNOWNPARAM = 0;\nCREATE TABLE a (id int);\nINSERT INTO a VALUES (1);\n"
+        let f = try tempFile("pg.sql", Data(dump.utf8))
+        defer { f.cleanup() }
+        let session = RecordingSession(engine: .postgresql)
+        let report = try await ImportRunner(session: session).run(file: f.url, authorization: token())
+        #expect(report.succeeded && report.statementsFailed == 0)
+        #expect(report.ignoredSettings == ["SET UNKNOWNPARAM = 0"])
+        #expect(session.statements.contains { $0.hasPrefix("INSERT INTO a") })
+        // A failing SET that is not "unknown parameter" still stops the import.
+        let bad = try tempFile("bad.sql", Data("SET FAIL = 1;\nCREATE TABLE b (id int);\n".utf8))
+        defer { bad.cleanup() }
+        let r2 = try await ImportRunner(session: RecordingSession(engine: .postgresql)).run(file: bad.url, authorization: token())
+        #expect(!r2.succeeded && r2.ignoredSettings.isEmpty)
     }
 
     @Test func continuesPastErrorsAndCollectsThem() async throws {

@@ -209,6 +209,9 @@ public struct ImportReport: Sendable {
     public var duration: Duration
     /// Rewrites applied by the collation stage, if any.
     public var collationRewrites: Int
+    /// `SET` statements the server doesn't know (a dump from a newer pg_dump, e.g. `SET transaction_timeout`):
+    /// skipped instead of failing the import.
+    public var ignoredSettings: [String] = []
 
     public var succeeded: Bool { completed && statementsFailed == 0 }
 }
@@ -240,6 +243,7 @@ public struct ImportRunner: Sendable {
         onEvent(.started(totalBytes: reader.totalBytes, isGzip: reader.isGzip))
         var executed = 0, failed = 0
         var errors: [ImportStatementError] = []
+        var ignoredSettings: [String] = []
         var stopped = false, cancelled = false
         var lastReport = clock.now
 
@@ -258,6 +262,12 @@ public struct ImportRunner: Sendable {
                     executed += 1
                 } catch {
                     if error is CancellationError { cancelled = true; return false }
+                    // pg_dump from a newer client sets parameters an older server lacks (42704 undefined_object).
+                    if dialect.family == .postgres, case DatabaseError.query(_, let code) = error, code == "42704",
+                       st.text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().hasPrefix("SET ") {
+                        ignoredSettings.append(String(st.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(120)))
+                        continue
+                    }
                     failed += 1
                     let e = Self.describe(error)
                     let item = ImportStatementError(
@@ -297,7 +307,8 @@ public struct ImportRunner: Sendable {
         return ImportReport(
             statementsExecuted: executed, statementsFailed: failed, errors: errors, bytesRead: reader.bytesRead,
             totalBytes: reader.totalBytes, completed: finishedFile && !stopped && !cancelled, wasCancelled: cancelled,
-            stoppedOnError: stopped, duration: clock.now - started, collationRewrites: rewriter?.totalRewrites ?? 0)
+            stoppedOnError: stopped, duration: clock.now - started, collationRewrites: rewriter?.totalRewrites ?? 0,
+            ignoredSettings: ignoredSettings)
     }
 
     /// A dump that stops half-way would leave the session with checks disabled and tables locked.

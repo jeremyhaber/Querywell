@@ -95,7 +95,7 @@ public struct MySQLSchemaInspector: SchemaInspector {
             ORDER BY ORDINAL_POSITION
             """
         )
-        let columns = columnsResult.records.map(column)
+        var columns = columnsResult.records.map(column)
 
         let indexes = try await indexes(schema: table.schema, name: table.name)
         let outgoing = try await foreignKeys(where: "k.TABLE_SCHEMA = \(schemaLit) AND k.TABLE_NAME = \(nameLit)")
@@ -108,6 +108,15 @@ public struct MySQLSchemaInspector: SchemaInspector {
             "SHOW CREATE \(info.kind == .view ? "VIEW" : "TABLE") \(dialect.qualified(table))"
         )
         let createStatement = create?.rows.first.flatMap { $0.count > 1 ? Record.string(from: $0[1]) : nil }
+
+        // MariaDB has no JSON type: `JSON` is LONGTEXT plus `CHECK (json_valid(col))`, so information_schema
+        // reports longtext. Recognise those columns so they get the JSON editor, filters and pill.
+        if session.serverInfo.engine == .mariadb, let ddl = createStatement?.lowercased() {
+            for i in columns.indices where columns[i].dataType == "longtext" && ddl.contains("json_valid(`\(columns[i].name.lowercased())`)") {
+                columns[i].dataType = "json"
+                columns[i].fullType = "json"
+            }
+        }
 
         return TableStructure(
             info: info, columns: columns, indexes: indexes, foreignKeys: outgoing,

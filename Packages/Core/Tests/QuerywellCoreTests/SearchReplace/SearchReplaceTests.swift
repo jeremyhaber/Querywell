@@ -195,7 +195,7 @@ struct SearchReplaceIntegrationTests {
             #expect(posts.skippedColumns.contains { $0.name == "guid" })
             #expect(!posts.columns.map(\.name).contains("ID"))
             let docs = try #require(plan.tables.first { $0.table.name == "wp_docs" })
-            #expect(docs.columns.first?.isJSON == (target.engine != .mariadb))  // MariaDB's JSON is LONGTEXT
+            #expect(docs.columns.first?.isJSON == true)  // MariaDB's JSON is LONGTEXT + json_valid CHECK, recognised by the inspector
             if !target.isPostgres {
                 let myisam = try #require(plan.tables.first { $0.table.name == "legacy_myisam" })
                 #expect(!myisam.isTransactional)
