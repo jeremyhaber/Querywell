@@ -57,9 +57,9 @@ targets:
     sources:
       - App/Tests
     dependencies:
+      # Core is reached through the host app (BUNDLE_LOADER). Linking it here too makes Xcode
+      # build every package product as a dynamic framework, which races at link time.
       - target: Querywell
-      - package: Core
-        product: QuerywellCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jeremyhaber.QuerywellTests
@@ -81,6 +81,5 @@ schemes:
       config: Debug
       targets:
         - QuerywellTests
-        - package: Core/QuerywellCoreTests
     profile:
       config: Release

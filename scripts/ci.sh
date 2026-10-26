@@ -79,7 +79,27 @@ if [ "$SKIP_XCODE" -eq 0 ]; then
   else
     record "xcodebuild build+test" PASS
   fi
-  WARNINGS="$(grep -E "warning:" "$LOG" | sort -u || true)"
+  # Our code and project config must be warning-free. Warnings that are unambiguously
+  # attributed to third-party SwiftPM checkouts are reported but don't fail (DECISIONS #19).
+  ALL_WARNINGS="$(grep -E "warning:" "$LOG" | sort -u || true)"
+  # Third-party = located in a SwiftPM checkout, or an Xcode dependency-scan warning about a module that isn't ours.
+  classify() {
+    awk -v want="$1" '
+      /^$/ { next }
+      {
+        ours = 1
+        if (index($0, "/SourcePackages/checkouts/") > 0) ours = 0
+        if (match($0, /^warning: .[A-Za-z_]+. is missing a dependency on .[A-Za-z_]+. because dependency scan of Swift module/)) {
+          ours = ($0 ~ /^warning: .(Querywell|QuerywellCore|QuerywellTests|QuerywellCoreTests). /) ? 1 : 0
+        }
+        if ((want == "ours" && ours) || (want == "third" && !ours)) print
+      }'
+  }
+  THIRD_PARTY="$(echo "$ALL_WARNINGS" | classify third)"
+  WARNINGS="$(echo "$ALL_WARNINGS" | classify ours)"
+  if [ -n "$THIRD_PARTY" ]; then
+    echo "Note: $(echo "$THIRD_PARTY" | wc -l | tr -d ' ') third-party dependency warning(s) ignored (see $LOG)."
+  fi
   if [ -n "$WARNINGS" ]; then
     echo "Warnings found in $LOG:"
     echo "$WARNINGS"
