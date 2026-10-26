@@ -1,0 +1,86 @@
+name: Querywell
+options:
+  bundleIdPrefix: com.jeremyhaber
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+packages:
+  Core:
+    path: Packages/Core
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    LM_SKIP_METADATA_EXTRACTION: YES
+targets:
+  Querywell:
+    type: application
+    platform: macOS
+    sources:
+      - App/Sources
+      - App/Resources
+    info:
+      path: App/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Querywell
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSHumanReadableCopyright: "Copyright © 2026 Jeremy Haber. All rights reserved."
+        LSMinimumSystemVersion: "14.0"
+    entitlements:
+      path: App/Resources/Querywell.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+    dependencies:
+      - package: Core
+        product: QuerywellCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jeremyhaber.Querywell
+        PRODUCT_NAME: Querywell
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        DEAD_CODE_STRIPPING: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        GENERATE_INFOPLIST_FILE: NO
+  QuerywellTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - App/Tests
+    dependencies:
+      - target: Querywell
+      - package: Core
+        product: QuerywellCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jeremyhaber.QuerywellTests
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Querywell.app/Contents/MacOS/Querywell"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  Querywell:
+    build:
+      targets:
+        Querywell: all
+        QuerywellTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - QuerywellTests
+        - package: Core/QuerywellCoreTests
+    profile:
+      config: Release

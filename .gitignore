@@ -1,0 +1,9 @@
+Querywell.xcodeproj/
+build/
+DerivedData/
+.build/
+Packages/Core/.build
+.swiftpm/
+*.xcuserstate
+xcuserdata/
+.DS_Store
