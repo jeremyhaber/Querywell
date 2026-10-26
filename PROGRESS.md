@@ -89,3 +89,31 @@ Problem: dumps from MySQL 8 (`utf8mb4_0900_ai_ci`) fail on MariaDB / MySQL 5.7 /
 
 ### C. Export table selection (requested by Jeremy, 2026-10-26) — Phase 7
 Per-table Structure / Data (default both) without checkbox fatigue: rows grouped by WordPress plugin (Wordfence, WooCommerce, Action Scheduler, Yoast…), click-to-cycle Both → Structure only → Skip, group-level toggles, a filter whose results can be bulk-skipped / made structure-only and **remembered as per-connection rules** (e.g. "Skip wp_wf*", shown as chips, auto-applied next time), one-click "Apply suggestions" for known log/cache tables (never automatic), live size estimate. Planner splits into up to three mysqldump invocations (full / --no-data / --no-create-info) concatenated into one file; pg_dump uses --exclude-table-data.
+
+## Phase 8A — performance at 1M rows, Postgres/MariaDB end-to-end, follow-ups ✅ (2026-10-26)
+
+**Data:** `scripts/perf-data.sh` creates (once, idempotently) `qw_perf.big_posts` (1,000,000 rows, ~600 B each: bigint PK, varchar, text, datetime, status, indexed `post_author` and a composite index, unindexed `post_name`/`post_content`) on MySQL 8.4 and Postgres 16 server-side. Measurements: `QUERYWELL_PERF=1 swift test --filter PerfTests` (Core, drivers + exporter) and `TEST_RUNNER_QUERYWELL_PERF=1 … -only-testing:QuerywellTests/GridPerfTests` (real `TableDataModel` + `DataGridView`). **All numbers are Debug builds on a laptop against local Docker.** The `qw_perf` schemas were dropped after measuring (disk); rerun the script to recreate them.
+
+| Measurement | Before (MySQL / PG) | After (MySQL / PG) |
+|---|---|---|
+| Open table, first page visible (structure + 500 rows) | 36 / 64 ms | 47 / 54 ms (model, incl. structure) |
+| Exact COUNT(*) 1M rows | 325 / 32 ms | same, but off the page session: arrives 440 / 102 ms after open |
+| Next page while COUNT(*) in flight | 273 / 24 ms (queued behind it) | 15 / 26 ms |
+| Page at OFFSET 990,000 | 689 / 1,106 ms | keyset 17 / 48 ms |
+| Last page | OFFSET ≈ 700 / 1,100 ms | 14-18 / 25-29 ms (model: 18 / 29) |
+| Previous page from the end | OFFSET | 17 / 31 ms |
+| Sorted by indexed `post_author`: first / last page | 75 / 30 ms first, last = deep OFFSET | 52-98 / 181-305 ms first; last 81-93 / 29-34 ms |
+| Sort by unindexed column, first page | 6,374 / 153 ms, holds the session | same cost, but Stop frees the UI at once; the statement aborts in 87 / 22 ms; next request after Stop 60 / 66 ms |
+| Funnel distinct, unindexed high-cardinality | 4,568 / 568 ms unbounded | capped at ~1.5 s + sample fallback ("Based on a sample of 100k rows") |
+| 10,000-row page: fetch+decode+display | 265 / 499 ms fetch only | 569 / 789 ms end to end; longest main-thread stall 1 ms |
+| Scrolling the 10k-row page | not measured | slowest frame 3.6 / 5.3 ms |
+| Query editor `SELECT * LIMIT 200000` | 5.5 s, RSS +350 MB / 10.7 s | unchanged: driver buffers, runner caps display at 50,000 (decision #61) |
+| Table export 1M rows → CSV (679 MB) | 115 s / 97 s, RSS 34→38 MB / 22→27 MB, progress per 1,000-row page | unchanged: already streaming (keyset on PK) and bounded |
+
+**Built:** `DatabaseSession.cancelCurrentQuery()` and `execute(_:interruptible:)` (MySQL `KILL QUERY`, Postgres `pg_cancel_backend`, via a fresh connection from the session's own config); `LiveConnection.openAuxiliarySession()`; Core `KeysetPage`/`TableStructure.keysetOrder`; `DistinctValuesQuery.run(on:policy:)` with timeout + sample; grid: keyset navigation, "Count exactly", Stop button, slow-deep-page notice, sampled-values note; query tab Stop now aborts the running statement; multi-prefix WordPress handling (export grouping, S&R picker, AI context); `Package.resolved` made stable (decision #64); timing tests loosened (#65).
+
+**Engine end-to-end (`App/Tests/EngineEndToEndTests.swift`, run by `scripts/snapshots.sh`):** MariaDB 11.4 and Postgres 16 with WordPress-like fixtures in `qw_e2e_*` schemas — sidebar, table data (sort, enum chip, funnel, raw WHERE, JSON column), Structure/Indexes/Relations, inline edit + conflict + insert, query tab (multi-statement, editable result, error), console, export (MariaDB over the ssh bastion, Postgres local pg_dump), import, search & replace on serialized/JSON values; light/dark PNGs `e2e-{mariadb,postgres}-{table-data,query-results}`.
+
+**Bugs found and fixed:** Postgres export dumped every schema in the database (now `--schema` + qualified patterns); Postgres import failed on `SET transaction_timeout` from a PG18 pg_dump into PG16 (unknown settings are skipped); MariaDB `JSON` columns were typed longtext (detected via `json_valid` CHECK); export grouping/prefix choice with two WordPress installs; query-tab Stop only worked between statements. Postgres import cannot rename the schema inside a pg_dump stream, so the end-to-end test renames the original away first (the sheet's "target schema" applies to MySQL/MariaDB dumps).
+
+**Left:** drivers still buffer whole result sets (200k rows ≈ 350 MB); Postgres import into a differently named schema; numbers are Debug builds.
