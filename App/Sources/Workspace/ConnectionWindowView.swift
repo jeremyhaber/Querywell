@@ -28,6 +28,9 @@ struct ConnectionWindowContent: View {
     @State private var showSwitcher = false
     @State private var editor: EditorItem?
     @State private var showConnectionPopover = false
+    /// Drives header density so toolbar items always fit (otherwise macOS shows its overflow
+    /// button, which sat behind the identity pill as a stray glass circle).
+    @State private var windowWidth: CGFloat = 0  // start compact; grows once measured (toolbar items shrink less reliably than they grow)
 
     private var profile: ConnectionProfile { workspace.profile }
 
@@ -54,7 +57,8 @@ struct ConnectionWindowContent: View {
             .sheet(item: $editor) { item in
                 ConnectionEditorView(draft: item.draft, isNew: false)
             }
-            .background(HideWindowTitle())  // identity lives in the toolbar; `title` stays set for the Window menu / VoiceOver
+            .modifier(RemoveToolbarTitle())  // identity lives in the toolbar; `title` stays set for the Window menu / VoiceOver
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { windowWidth = $0 }
             .background(
                 WindowAccessor { window in
                     workspace.window = window
@@ -173,15 +177,16 @@ struct ConnectionWindowContent: View {
         // One cohesive leading item (identity + status). On macOS 26 the system would otherwise
         // wrap it in its own Liquid Glass capsule on top of the pill we draw ourselves.
         if #available(macOS 26.0, *) {
-            ToolbarItem(placement: .navigation) { identityCluster }
+            // `.navigation` items get a capped width on macOS 26; a wider cluster there is clipped
+            // and AppKit shows its overflow button behind it. `.automatic` + a flexible spacer
+            // keeps the identity leading and the actions trailing.
+            ToolbarItem(placement: .automatic) { identityCluster }
                 .sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .principal) { flexibleGap }
-                .sharedBackgroundVisibility(.hidden)
-            ToolbarItem(placement: .primaryAction) { trailingCluster }
+            ToolbarSpacer(.flexible)
+            ToolbarItem(placement: .automatic) { trailingCluster }
                 .sharedBackgroundVisibility(.hidden)
         } else {
             ToolbarItem(placement: .navigation) { identityCluster }
-            ToolbarItem(placement: .principal) { flexibleGap }
             ToolbarItem(placement: .primaryAction) { trailingCluster }
         }
     }
@@ -193,10 +198,10 @@ struct ConnectionWindowContent: View {
         }
     }
 
-    /// With the system title hidden nothing pushes the trailing items to the right edge.
-    private var flexibleGap: some View {
-        Color.clear.frame(minWidth: 20, maxWidth: .infinity, minHeight: 1).accessibilityHidden(true)
-    }
+    /// Header density for the current window width. Thresholds leave room for the traffic
+    /// lights and both clusters at the window's minimum width (820pt).
+    private var showsEngineLabel: Bool { windowWidth >= 1040 }
+    private var showsQuickOpenText: Bool { windowWidth >= 960 }
 
     private var trailingCluster: some View {
         HStack(spacing: 10) {
@@ -211,14 +216,16 @@ struct ConnectionWindowContent: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                Text("Jump to table, query…")
-                Spacer(minLength: 8)
+                if showsQuickOpenText {
+                    Text("Jump to table, query…")
+                    Spacer(minLength: 8)
+                }
                 KeyCap("⌘K")
             }
             .font(.system(size: 13))
             .foregroundStyle(Theme.textSecondary)
             .padding(.horizontal, 10)
-            .frame(minWidth: 220, minHeight: 28)
+            .frame(minWidth: showsQuickOpenText ? 220 : nil, minHeight: 28)
             .headerPill()
         }
         .buttonStyle(.plain)
@@ -261,9 +268,14 @@ struct ConnectionWindowContent: View {
                 Text(profile.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Theme.text)
-                Text(headerSubtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textSecondary)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: 240, alignment: .leading)
+                    .fixedSize(horizontal: profile.name.count <= 28, vertical: false)
+                if showsEngineLabel {
+                    Text(headerSubtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                }
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)

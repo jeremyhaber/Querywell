@@ -191,7 +191,8 @@ final class ConnectionWorkspace: Identifiable {
             guard self.live === live else { return }
             databases = names
             let current = (try? await live.session.currentDatabase()) ?? nil
-            selectedDatabase = [profile.defaultDatabase, current].compactMap { $0 }.first(where: names.contains) ?? names.first
+            selectedDatabase = DatabaseSelection.preferred(
+                among: names, defaultDatabase: profile.defaultDatabase, current: current, engine: profile.engine)
         } catch {
             databases = []
         }

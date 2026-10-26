@@ -180,3 +180,15 @@ struct HideWindowTitle: NSViewRepresentable {
         }
     }
 }
+
+/// Removes the system title from the toolbar so it takes no space (and can't push items into
+/// the overflow menu). macOS 15+ has API for it; on 14 the title is hidden on the NSWindow.
+struct RemoveToolbarTitle: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(removing: .title)
+        } else {
+            content.background(HideWindowTitle())
+        }
+    }
+}

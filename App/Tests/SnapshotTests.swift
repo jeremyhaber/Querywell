@@ -10,7 +10,7 @@ import Testing
 /// Opt-in: `scripts/snapshots.sh` sets QUERYWELL_SNAPSHOTS=1 (Docker test servers must be up).
 /// Output: `QUERYWELL_SNAPSHOT_DIR` (default build/snapshots).
 @MainActor
-@Suite("Snapshots", .enabled(if: ProcessInfo.processInfo.environment["QUERYWELL_SNAPSHOTS"] == "1"))
+@Suite("Snapshots", .serialized, .enabled(if: ProcessInfo.processInfo.environment["QUERYWELL_SNAPSHOTS"] == "1"))
 struct SnapshotTests {
     private let outputDirectory: URL = {
         let env = ProcessInfo.processInfo.environment["QUERYWELL_SNAPSHOT_DIR"]
@@ -59,10 +59,11 @@ struct SnapshotTests {
         return id
     }
 
-    private func render<V: View>(_ view: V, model: AppModel, size: CGSize, name: String) throws {
+    private func render<V: View>(_ view: V, model: AppModel, size: CGSize, name: String) async throws {
         for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let host = NSHostingController(rootView: view.environment(model))
             host.sceneBridgingOptions = [.toolbars, .title]
+        host.sizingOptions = []  // keep the window at its real size from the first layout, as SwiftUI scenes do
             let window = NSWindow(
                 contentRect: NSRect(origin: .zero, size: size),
                 styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
@@ -72,22 +73,61 @@ struct SnapshotTests {
             window.setContentSize(size)
             window.orderFrontRegardless()
             // Let SwiftUI lay out, run onAppear tasks and settle.
-            RunLoop.main.run(until: Date().addingTimeInterval(2))
-            let target = window.contentView?.superview ?? window.contentView!
-            let rep = try #require(target.bitmapImageRepForCachingDisplay(in: target.bounds))
-            target.cacheDisplay(in: target.bounds, to: rep)
-            let png = try #require(rep.representation(using: .png, properties: [:]))
+            try await Task.sleep(for: .seconds(2))  // never RunLoop.run: it blocks the main actor, so SwiftUI layout stalls
+            // Real window-server output: cacheDisplay doesn't draw macOS 26 toolbar glass correctly
+            // (it produced phantom shapes). Capturing our own window needs no Screen Recording permission.
+            let image = try #require(Self.captureWindow(window.windowNumber))
+            let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
             try png.write(to: outputDirectory.appendingPathComponent("\(name)-\(suffix).png"))
+            // Hide, don't close: closing a connection window (correctly) closes its workspace,
+            // and these renders reuse one live connection.
             window.orderOut(nil)
-            window.close()
         }
+    }
+
+    /// `CGWindowListCreateImage`, resolved at runtime: it's deprecated and warnings are errors.
+    private static func captureWindow(_ windowNumber: Int) -> CGImage? {
+        typealias CaptureFn = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        let capture = unsafeBitCast(symbol, to: CaptureFn.self)
+        let optionIncludingWindow: UInt32 = 1 << 3
+        let imageOptionBoundsIgnoreFraming: UInt32 = 1 << 0
+        return capture(.null, optionIncludingWindow, UInt32(windowNumber), imageOptionBoundsIgnoreFraming)?
+            .takeRetainedValue()
+    }
+
+    /// Hosts `view` in a window of `width` and reports whether the toolbar shows its overflow button.
+    private func toolbarOverflows<V: View>(_ view: V, model: AppModel, width: CGFloat) async throws -> Bool {
+        let host = NSHostingController(rootView: view.environment(model))
+        host.sceneBridgingOptions = [.toolbars, .title]
+        host.sizingOptions = []  // keep the window at its real size from the first layout, as SwiftUI scenes do
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 700),
+                              styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentViewController = host
+        window.setContentSize(NSSize(width: width, height: 700))
+        window.orderFrontRegardless()
+        try await Task.sleep(for: .seconds(1.5))  // never RunLoop.run: it blocks the main actor, so SwiftUI layout stalls
+        defer { window.orderOut(nil) }  // see render(): don't close, it ends the workspace
+        if let image = Self.captureWindow(window.windowNumber),
+           let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+            try png.write(to: outputDirectory.appendingPathComponent("toolbar-\(Int(width)).png"))
+        }
+        func visibleIndicator(_ v: NSView) -> Bool {
+            if String(describing: type(of: v)).contains("ClippedItemsIndicator"), !v.isHiddenOrHasHiddenAncestor, v.alphaValue > 0 {
+                return true
+            }
+            return v.subviews.contains(where: visibleIndicator)
+        }
+        return visibleIndicator(try #require(window.contentView?.superview))
     }
 
     @Test func launcher() async throws {
         let (model, dir) = try await makeModel()
         defer { try? FileManager.default.removeItem(at: dir) }
         _ = try await seed(model)
-        try render(LauncherView(), model: model, size: CGSize(width: 1000, height: 660), name: "launcher")
+        try await render(LauncherView(), model: model, size: CGSize(width: 1000, height: 660), name: "launcher")
     }
 
     @Test func connectionEditor() async throws {
@@ -96,7 +136,7 @@ struct SnapshotTests {
         let id = try await seed(model)
         let profile = try #require(model.profile(id: id))
         let draft = ConnectionDraft(profile: profile, secrets: try model.loadSecrets(for: profile))
-        try render(ConnectionEditorView(draft: draft, isNew: false), model: model,
+        try await render(ConnectionEditorView(draft: draft, isNew: false), model: model,
                    size: CGSize(width: 620, height: 900), name: "editor")
     }
 
@@ -117,8 +157,13 @@ struct SnapshotTests {
         workspace.tabs.openTable(database: "querywell_test", name: "wp_posts")
         workspace.tabs.openConsole()
         workspace.tabs.select(id: workspace.tabs.tabs[1].id)
-        try render(ConnectionWindowView(workspaceID: workspaceID), model: model,
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model,
                    size: CGSize(width: 1200, height: 760), name: "connection-window")
+        // The toolbar must fit without AppKit's overflow ("»") button at any supported width.
+        for width in [1200.0, 1000, 820] {
+            #expect(try await toolbarOverflows(ConnectionWindowView(workspaceID: workspaceID), model: model, width: width) == false,
+                    "toolbar overflowed at \(width)pt")
+        }
         // focusExisting: a second connect for the same profile focuses instead of opening.
         #expect(await model.connect(profileID: id) == nil)
         await model.closeWorkspace(id: workspaceID)
