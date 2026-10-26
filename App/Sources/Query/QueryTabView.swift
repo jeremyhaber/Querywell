@@ -26,6 +26,7 @@ struct QueryTabView: View {
         .background(Theme.background)
         .background { shortcuts }
         .task(id: workspace.connectionEpoch) { model.invalidateCatalog() }
+        .task { await workspace.queryLibrary.refreshAllSaved(); await model.refreshTables() }
         .onAppear { wireAssistant(); refreshAssistantConfig() }
         .onChange(of: app.settings.ai) { _, _ in refreshAssistantConfig() }
         .onChange(of: model.showsAssistant) { _, on in if on { refreshAssistantConfig() } }
@@ -72,7 +73,6 @@ struct QueryTabView: View {
     private var editorPane: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider()
             SQLTextView(
                 controller: model.editor, initialText: model.text,
                 settings: SQLEditorSettings(
@@ -84,6 +84,7 @@ struct QueryTabView: View {
                     }
                 }
                 .motionAnimation(.easeOut(duration: 0.18), value: model.toast)
+                .clipped()
         }
     }
 
@@ -110,6 +111,7 @@ struct QueryTabView: View {
             Button("Format") { model.format() }
                 .disabled(!model.hasText)
                 .help("Tidy the SQL (⌥⌘F)")
+            quickQueriesMenu
             Spacer(minLength: 8)
             Menu {
                 Button("Save Query…") { Task { await model.save() } }.keyboardShortcut("s", modifiers: .command)
@@ -141,6 +143,55 @@ struct QueryTabView: View {
         .font(.system(size: 13))
         .lineLimit(1)
         .padding(.horizontal, 14).padding(.vertical, 8)
+        // An opaque bar above the editor: nothing from the editor or its gutter shows through.
+        .background(Theme.chrome)
+        .overlay(alignment: .bottom) { Theme.separator.frame(height: 1) }
+        .zIndex(1)
+    }
+
+    // MARK: Quick queries
+
+    private var quickQueriesMenu: some View {
+        let snippets = workspace.queryLibrary.allSnippets
+        let target = model.quickTable.map(\.name) ?? "at cursor"
+        return Menu {
+            Section("Table: \(target)") {
+                ForEach(QuickQueryKind.tableLevel) { kind in
+                    Button(kind.title) { Task { await model.insertQuickQuery(kind) } }
+                }
+            }
+            Section("This database") {
+                ForEach(QuickQueryKind.databaseLevel) { kind in
+                    Button(kind.title) { Task { await model.insertQuickQuery(kind) } }
+                }
+            }
+            Divider()
+            Menu("Choose table") {
+                Button { model.quickTable = nil } label: {
+                    Text(model.quickTable == nil ? "✓ Table at cursor" : "Table at cursor")
+                }
+                Divider()
+                ForEach(model.knownTables.prefix(400)) { info in
+                    Button { model.quickTable = info.ref } label: {
+                        Text(model.quickTable == info.ref ? "✓ \(info.ref.name)" : info.ref.name)
+                    }
+                }
+            }
+            if !snippets.isEmpty {
+                Menu("Snippets") {
+                    ForEach(snippets) { snippet in
+                        Button(snippet.name) { model.insertSnippet(snippet.sql); model.editor.focus() }
+                    }
+                }
+            }
+        } label: {
+            Text("Quick queries")
+        }
+        .menuStyle(.button)
+        .buttonStyle(OutlineButtonStyle())
+        .fixedSize()
+        .help("Insert a common query for a table: SELECT, COUNT, INSERT, UPDATE, structure, sizes …")
+        .accessibilityLabel("Quick queries")
     }
 
     private var runButton: some View {

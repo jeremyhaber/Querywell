@@ -121,6 +121,11 @@ final class SQLEditorTextView: NSTextView, NSViewToolTipOwner {
         scroll.drawsBackground = true
         scroll.backgroundColor = ThemeNS.background
         scroll.documentView = tv
+        // The gutter and its divider must never paint outside the editor (e.g. up under the toolbar).
+        scroll.automaticallyAdjustsContentInsets = false
+        scroll.contentInsets = NSEdgeInsetsZero
+        scroll.wantsLayer = true
+        scroll.layer?.masksToBounds = true
 
         let ruler = LineNumberRuler(scrollView: scroll, textView: tv)
         scroll.verticalRulerView = ruler
@@ -670,6 +675,8 @@ final class LineNumberRuler: NSRulerView {
     override var isOpaque: Bool { true }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
+        // Paint only inside the ruler's own bounds.
+        NSBezierPath(rect: bounds).setClip()
         ThemeNS.sidebar.setFill()
         bounds.fill()
         ThemeNS.separator.setFill()

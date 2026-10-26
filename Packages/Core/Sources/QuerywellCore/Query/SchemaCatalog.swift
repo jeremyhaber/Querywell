@@ -88,6 +88,7 @@ public actor SchemaCatalogLoader {
     private let inspector: any SchemaInspector
     public private(set) var catalog = SchemaCatalog()
     private var loadingColumns: Set<TableRef> = []
+    private var structures: [TableRef: TableStructure] = [:]
 
     public init(inspector: any SchemaInspector) {
         self.inspector = inspector
@@ -113,8 +114,20 @@ public actor SchemaCatalogLoader {
         for ref in refs where catalog.columns(of: ref) == nil && !loadingColumns.contains(ref) {
             loadingColumns.insert(ref)
             defer { loadingColumns.remove(ref) }
-            if let structure = try? await inspector.structure(of: ref) { catalog.add(structure) }
+            if let structure = try? await inspector.structure(of: ref) {
+                catalog.add(structure)
+                structures[structure.info.ref] = structure
+            }
         }
+    }
+
+    /// The full structure (indexes and keys too) of `ref`, loaded once and kept alongside the columns.
+    public func structure(of ref: TableRef) async -> TableStructure? {
+        if let s = structures[ref] { return s }
+        guard let structure = try? await inspector.structure(of: ref) else { return nil }
+        catalog.add(structure)
+        structures[ref] = structure
+        return structure
     }
 
     /// Completes, loading whatever the first pass reported missing, then completes again.

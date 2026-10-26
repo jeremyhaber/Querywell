@@ -316,6 +316,7 @@ struct QueryTabModelTests {
         try await history.record(HistoryEntry(sql: "SELECT a FROM t", rowCount: 5))  // consecutive duplicate: run count
         try await history.record(HistoryEntry(sql: "DELETE FROM t", error: "boom"))
         let library = QueryLibraryModel(connectionID: id, services: services)
+        library.segment = .history
         await library.reload()
         #expect(library.history.map(\.sql) == ["DELETE FROM t", "SELECT a FROM t"])
         #expect(library.history.last?.runCount == 2)

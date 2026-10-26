@@ -2,7 +2,7 @@ import AppKit
 import QuerywellCore
 import SwiftUI
 
-/// Left column of query tabs (design: Query.dc.html `aside`): History | Saved | Snippets.
+/// Left column of query tabs (design: Query.dc.html `aside`): Schema | History | Saved | Snippets.
 struct QuerySidebarView: View {
     @Bindable var workspace: ConnectionWorkspace
     @Bindable var library: QueryLibraryModel
@@ -14,7 +14,7 @@ struct QuerySidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             SegmentedPills(selection: $library.segment)
-            searchField
+            if library.segment != .schema { searchField }
             list
             footer
         }
@@ -75,6 +75,7 @@ struct QuerySidebarView: View {
     @ViewBuilder
     private var list: some View {
         switch library.segment {
+        case .schema: QuerySchemaList(workspace: workspace)
         case .history: historyList
         case .saved: savedList
         case .snippets: snippetList
@@ -247,7 +248,7 @@ struct QuerySidebarView: View {
                 Label("New Snippet", systemImage: "plus").font(.system(size: 11))
             }
             .buttonStyle(.plain).foregroundStyle(Theme.accentText)
-        case .saved:
+        case .saved, .schema:
             EmptyView()
         }
         if let error = library.error {
@@ -271,6 +272,7 @@ struct SegmentedPills: View {
                 Button { selection = segment } label: {
                     Text(segment.rawValue)
                         .font(.system(size: 12, weight: selection == segment ? .medium : .regular))
+                        .lineLimit(1).minimumScaleFactor(0.8)
                         .foregroundStyle(selection == segment ? Theme.text : Theme.chipText)
                         .frame(maxWidth: .infinity).padding(.vertical, 5)
                         .background {
