@@ -90,6 +90,36 @@ struct ImportRunnerUnitTests {
         #expect(report.bytesRead == report.totalBytes)
     }
 
+    @Test func errorHookCanStopTheImportAfterAFailure() async throws {
+        let f = try tempFile("d.sql", Data(script.utf8))
+        defer { f.cleanup() }
+        let session = RecordingSession()
+        var options = ImportOptions(stopOnError: false)
+        options.onError = { error in error.statementIndex == 2 ? .stop : .continue }
+        let report = try await ImportRunner(session: session).run(file: f.url, options: options, authorization: token())
+        #expect(report.stoppedOnError && !report.completed)
+        #expect(report.statementsFailed == 1)
+        #expect(!session.statements.contains { $0.contains("(3)") })
+    }
+
+    @Test func errorHookContinuingKeepsGoing() async throws {
+        let f = try tempFile("d.sql", Data(script.utf8))
+        defer { f.cleanup() }
+        let session = RecordingSession()
+        var options = ImportOptions(stopOnError: false)
+        options.onError = { _ in .continue }
+        let report = try await ImportRunner(session: session).run(file: f.url, options: options, authorization: token())
+        #expect(report.completed && report.statementsExecuted == 3)
+    }
+
+    @Test func progressNamesTheStatementBeingRun() async throws {
+        let f = try tempFile("d.sql", Data("CREATE TABLE a (id int);\nINSERT INTO a VALUES (1);".utf8))
+        defer { f.cleanup() }
+        let events = EventBox()
+        _ = try await ImportRunner(session: RecordingSession()).run(file: f.url, authorization: token()) { events.add($0) }
+        #expect(events.progress.last?.currentStatement == "INSERT INTO a VALUES (1)")
+    }
+
     @Test func snippetIsLimitedTo200Characters() async throws {
         let long = "INSERT INTO a VALUES ('FAIL" + String(repeating: "x", count: 1000) + "');"
         let f = try tempFile("d.sql", Data(long.utf8))

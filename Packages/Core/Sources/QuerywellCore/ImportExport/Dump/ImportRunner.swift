@@ -142,9 +142,18 @@ public enum ImportScanner {
 
 // MARK: - Run
 
+/// What to do after a failing statement when ``ImportOptions/stopOnError`` is off and an ``ImportOptions/onError`` hook asks.
+public enum ImportErrorDecision: Sendable, Equatable {
+    case `continue`
+    case stop
+}
+
 public struct ImportOptions: Sendable {
     /// Stop at the first failing statement (default). Otherwise keep going and collect the errors.
     public var stopOnError: Bool
+    /// Asked after each failing statement when `stopOnError` is off, so a UI can offer Continue / Stop.
+    /// The import waits for the answer. `nil` keeps going silently.
+    public var onError: (@Sendable (ImportStatementError) async -> ImportErrorDecision)?
     /// Rewrite charsets/collations in the DDL on the fly (`nil` keeps the file as it is).
     public var collation: CollationMapping?
     /// Errors kept in the report when `stopOnError` is off (the count keeps growing).
@@ -176,6 +185,8 @@ public struct ImportProgress: Sendable, Equatable {
     public var totalBytes: Int64
     public var statementsExecuted: Int
     public var errorCount: Int
+    /// The first 120 characters of the statement being (or last) executed, for progress displays.
+    public var currentStatement: String?
     public var fraction: Double { totalBytes > 0 ? min(1, Double(bytesRead) / Double(totalBytes)) : 0 }
 }
 
@@ -232,13 +243,16 @@ public struct ImportRunner: Sendable {
         var stopped = false, cancelled = false
         var lastReport = clock.now
 
+        var current: String?
         func report() -> ImportProgress {
-            ImportProgress(bytesRead: reader.bytesRead, totalBytes: reader.totalBytes, statementsExecuted: executed, errorCount: failed)
+            ImportProgress(bytesRead: reader.bytesRead, totalBytes: reader.totalBytes, statementsExecuted: executed, errorCount: failed,
+                           currentStatement: current)
         }
 
         func execute(_ statements: [SplitStatement]) async -> Bool {
             for st in statements {
                 if Task.isCancelled { cancelled = true; return false }
+                current = String(st.text.prefix(120))
                 do {
                     _ = try await session.execute(st.text)
                     executed += 1
@@ -252,6 +266,7 @@ public struct ImportRunner: Sendable {
                     if errors.count < options.maxRecordedErrors { errors.append(item) }
                     onEvent(.statementFailed(item))
                     if options.stopOnError { stopped = true; return false }
+                    if let ask = options.onError, await ask(item) == .stop { stopped = true; return false }
                 }
                 if clock.now - lastReport > .milliseconds(100) {
                     lastReport = clock.now

@@ -26,6 +26,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var dataGrid: DataGrid
     public var ai: AI
     public var historyRetention: HistoryRetention
+    public var console: Console
 
     public init(
         schemaVersion: Int = AppSettings.currentSchemaVersion,
@@ -34,7 +35,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         editor: Editor = Editor(),
         dataGrid: DataGrid = DataGrid(),
         ai: AI = AI(),
-        historyRetention: HistoryRetention = HistoryRetention()
+        historyRetention: HistoryRetention = HistoryRetention(),
+        console: Console = Console()
     ) {
         self.schemaVersion = schemaVersion
         self.general = general
@@ -43,6 +45,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.dataGrid = dataGrid
         self.ai = ai
         self.historyRetention = historyRetention
+        self.console = console
     }
 
     public struct General: Codable, Sendable, Equatable {
@@ -159,6 +162,32 @@ public struct AppSettings: Codable, Sendable, Equatable {
         }
     }
 
+    /// The SQL console tab.
+    public struct Console: Codable, Sendable, Equatable {
+        public static let maxCellWidthRange: ClosedRange<Int> = 8...400
+
+        /// Cells wider than this many characters are cut with an ellipsis in the console's tables.
+        public var maxCellWidth: Int {
+            didSet { maxCellWidth = Self.clamp(maxCellWidth) }
+        }
+        /// Show tables with every cell in full (ignores ``maxCellWidth``).
+        public var showFullCells: Bool
+
+        public init(maxCellWidth: Int = 64, showFullCells: Bool = false) {
+            self.maxCellWidth = Self.clamp(maxCellWidth)
+            self.showFullCells = showFullCells
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let d = Console()
+            maxCellWidth = Self.clamp(c.value(.maxCellWidth, d.maxCellWidth))
+            showFullCells = c.value(.showFullCells, d.showFullCells)
+        }
+
+        private static func clamp(_ v: Int) -> Int { min(max(v, maxCellWidthRange.lowerBound), maxCellWidthRange.upperBound) }
+    }
+
     public struct AI: Codable, Sendable, Equatable {
         public var provider: AIProviderID?
         public var model: String?
@@ -198,7 +227,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case schemaVersion, general, safety, editor, dataGrid, ai, historyRetention }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, general, safety, editor, dataGrid, ai, historyRetention, console }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -209,6 +238,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         dataGrid = c.value(.dataGrid, DataGrid())
         ai = c.value(.ai, AI())
         historyRetention = c.value(.historyRetention, HistoryRetention())
+        console = c.value(.console, Console())
     }
 }
 
