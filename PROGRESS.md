@@ -31,6 +31,19 @@
 
 **Next — Phase 3 (App shell):** launcher window per design (`design/project/Connections.dc.html`), connection editor with Test button, one window per connection holding a `LiveConnection`, native tabs, ⌘K switcher, PROD badge, Settings.
 
+## Phase 3 — App shell ✅ (2026-10-26)
+
+**Built**
+- Core: launcher query (search/folders/favourites/tags/sort), card summaries, fuzzy matcher + ⌘K quick switcher model, workspace tab model, `AppSettings` + store, `ConnectionDraft` (editor form state, secret save/delete rules), `LatencyFormatter`, `DatabaseSelection`.
+- App: launcher per design (folders/tags sidebar, search, cards, context menus, drag-to-folder, empty states); connection editor sheet with live Test Connection; one window per connection (`ConnectionWorkspace` holding a `LiveConnection`, keepalive, reconnect); toolbar identity pill with PROD badge, status + latency, ⌘K and New query; in-window tab strip; ⌘K palette; Settings (AI keys in Keychain); Debug ▸ Add Docker test connections; quit closes all connections/tunnels.
+- `scripts/snapshots.sh`: renders launcher/editor/connection window (light+dark) from real window-server captures, drives a real Docker connection end to end, asserts the toolbar never overflows at 1200/1000/820pt.
+
+**Fixed after review:** toolbar identity was split/ghosted and a stray glass circle (AppKit overflow button) appeared behind it (#27); default DB skipped system schemas; window-accessor use-after-free on fast close; editor Test used stored secret after the field was cleared.
+
+**Status:** CI PASS, 0 warnings. Core 230+ tests, app 22+ tests, snapshot suite green.
+
+**Next — Phase 4 (Table browser):** schema introspection, data grid, structure/indexes/relations, filters + chips, inline edit with review/commit, row inspector, PROD write guard, batch engine/collation changes.
+
 ## Scope additions (requested by Jeremy, 2026-10-26)
 
 ### A. Collation / charset compatibility on export (and import) — Phase 7
