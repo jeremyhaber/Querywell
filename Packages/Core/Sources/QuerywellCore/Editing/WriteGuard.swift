@@ -1,0 +1,391 @@
+import Foundation
+
+// Pure write-safety policy. The UI asks `WriteGuard.evaluate` before running anything that isn't
+// a plain read; it either runs the statements, shows "blocked", or shows a confirmation sheet
+// built from `ConfirmationRequest` (dry-run counts via `DryRunExecutor`, optional typed name).
+
+/// What the guard needs to know about the connection a script will run on.
+public struct GuardContext: Sendable, Equatable {
+    public var isProduction: Bool
+    /// The connection's read-only switch (`ConnectionProfile.effectiveReadOnly`).
+    public var isReadOnly: Bool
+    /// The database/schema the session is currently using — what the user must type to confirm
+    /// destructive production statements.
+    public var databaseName: String?
+    /// Fallback for the typed confirmation when no database is selected.
+    public var connectionName: String?
+    public var dialect: SQLDialect
+
+    public init(isProduction: Bool, isReadOnly: Bool, databaseName: String?, connectionName: String? = nil, dialect: SQLDialect) {
+        self.isProduction = isProduction
+        self.isReadOnly = isReadOnly
+        self.databaseName = databaseName
+        self.connectionName = connectionName
+        self.dialect = dialect
+    }
+
+    public init(profile: ConnectionProfile, currentDatabase: String?) {
+        self.init(isProduction: profile.isProduction, isReadOnly: profile.effectiveReadOnly,
+                  databaseName: currentDatabase ?? profile.defaultDatabase, connectionName: profile.name,
+                  dialect: SQLDialect(profile.engine))
+    }
+}
+
+public enum ConfirmationReason: Sendable, Hashable {
+    /// Any write on a Production-tagged connection.
+    case productionWrite
+    /// DELETE/UPDATE without an effective WHERE (any connection). `statementIndex` indexes `ConfirmationRequest.statements`.
+    case unfilteredMutation(statementIndex: Int)
+    /// Destructive statement on Production: dry-run counts are shown and the database name must be typed.
+    case destructiveOnProduction
+    /// The caller escalated the whole batch (e.g. batch ALTER from the table browser).
+    case escalated
+}
+
+/// One row-count query that previews a destructive statement.
+public struct DryRunPlan: Sendable, Hashable {
+    /// Index into ``ConfirmationRequest/statements``.
+    public var statementIndex: Int
+    /// What is being counted, e.g. "orders" or "DROP DATABASE".
+    public var subject: String
+    /// `SELECT COUNT(*) …`, or nil when the effect can't be estimated safely.
+    public var sql: String?
+    /// Human-readable explanation; for `sql == nil` it says why ("Can't estimate affected rows: …").
+    public var explanation: String
+
+    public init(statementIndex: Int, subject: String, sql: String?, explanation: String) {
+        self.statementIndex = statementIndex
+        self.subject = subject
+        self.sql = sql
+        self.explanation = explanation
+    }
+}
+
+public struct ConfirmationRequest: Sendable, Hashable {
+    /// The write-like statements that will run (reads/session/transaction statements are omitted).
+    public var statements: [ClassifiedStatement]
+    public var reasons: [ConfirmationReason]
+    /// The text the user must type to enable the confirm button; nil when no typing is required.
+    public var requiresTypedName: String?
+    public var dryRuns: [DryRunPlan]
+    public var isProduction: Bool
+
+    public init(statements: [ClassifiedStatement], reasons: [ConfirmationReason], requiresTypedName: String?,
+                dryRuns: [DryRunPlan], isProduction: Bool) {
+        self.statements = statements
+        self.reasons = reasons
+        self.requiresTypedName = requiresTypedName
+        self.dryRuns = dryRuns
+        self.isProduction = isProduction
+    }
+
+    /// Whether the user's typed text (exact match, surrounding whitespace ignored) satisfies the request.
+    public func isSatisfied(byTyped typed: String) -> Bool {
+        guard let required = requiresTypedName else { return true }
+        return typed.trimmingCharacters(in: .whitespacesAndNewlines) == required
+    }
+}
+
+public enum GuardDecision: Sendable, Hashable {
+    case allow
+    case blockedReadOnly(String)
+    case confirm(ConfirmationRequest)
+}
+
+public enum WriteGuard {
+    /// - Parameters:
+    ///   - escalateToDestructive: treat every write as destructive (typed name on Production); used
+    ///     by batch table operations whose statements (ALTER) aren't destructive on their own.
+    public static func evaluate(
+        _ statements: [ClassifiedStatement],
+        context: GuardContext,
+        settings: AppSettings.Safety = AppSettings.Safety(),
+        escalateToDestructive: Bool = false
+    ) -> GuardDecision {
+        let writes = statements.filter { $0.kind.isWriteLike }
+
+        if context.isReadOnly, let offender = writes.first {
+            let n = (statements.firstIndex(of: offender) ?? 0) + 1
+            let what = offender.verb.isEmpty ? "statement" : offender.verb
+            let reason = writes.count == 1
+                ? "This connection is read-only. The \(what) statement can't run."
+                : "This connection is read-only. Statement \(n) (\(what)) can't run."
+            return .blockedReadOnly(reason)
+        }
+        guard !writes.isEmpty else { return .allow }
+
+        var reasons: [ConfirmationReason] = []
+        // Production writes always confirm; the setting is locked ON in the UI (DECISIONS #12), so it
+        // is not consulted here — a hand-edited settings file can't switch the guard off.
+        if context.isProduction { reasons.append(.productionWrite) }
+        if escalateToDestructive { reasons.append(.escalated) }
+        for (i, s) in writes.enumerated() where s.isUnfilteredMutation {
+            reasons.append(.unfilteredMutation(statementIndex: i))
+        }
+        let destructive = writes.filter { $0.isDestructive || escalateToDestructive }
+        let needsTyping = context.isProduction && settings.requireTypingDatabaseNameForDestructive && !destructive.isEmpty
+        if context.isProduction, !destructive.isEmpty { reasons.append(.destructiveOnProduction) }
+
+        guard !reasons.isEmpty else { return .allow }
+
+        var plans: [DryRunPlan] = []
+        for (i, s) in writes.enumerated() where s.isDestructive {
+            plans += DryRunPlanner.plans(for: s, statementIndex: i, dialect: context.dialect)
+        }
+
+        var typed: String?
+        if needsTyping {
+            typed = context.databaseName.flatMap { $0.isEmpty ? nil : $0 }
+                ?? context.connectionName.flatMap { $0.isEmpty ? nil : $0 }
+                ?? "PRODUCTION"
+        }
+        return .confirm(ConfirmationRequest(
+            statements: writes, reasons: reasons, requiresTypedName: typed, dryRuns: plans,
+            isProduction: context.isProduction))
+    }
+
+    /// Classifies a script and evaluates it.
+    public static func evaluate(
+        script: String, context: GuardContext, settings: AppSettings.Safety = AppSettings.Safety()
+    ) -> GuardDecision {
+        evaluate(StatementClassifier(dialect: context.dialect).classify(script: script), context: context, settings: settings)
+    }
+
+    /// Classifies already-split SQL strings (e.g. `EditSession.statements`) and evaluates them.
+    public static func evaluate(
+        statements sql: [String], context: GuardContext, settings: AppSettings.Safety = AppSettings.Safety(),
+        escalateToDestructive: Bool = false
+    ) -> GuardDecision {
+        let c = StatementClassifier(dialect: context.dialect)
+        return evaluate(sql.map { c.classify(text: $0) }, context: context, settings: settings,
+                        escalateToDestructive: escalateToDestructive)
+    }
+}
+
+// MARK: - Dry-run planning
+
+/// Derives `SELECT COUNT(*)` previews for destructive statements.
+///
+/// Rewriting is deliberately narrow: only single-table `DELETE` / `UPDATE` that the lexer can take
+/// apart unambiguously (no CTE, JOIN, USING, `UPDATE … FROM`, multi-table, placeholders, executable
+/// comments). Everything else yields a plan with `sql == nil` and an explanation.
+public enum DryRunPlanner {
+    public static func plans(for statement: ClassifiedStatement, statementIndex: Int, dialect: SQLDialect) -> [DryRunPlan] {
+        func cannot(_ subject: String, _ why: String) -> [DryRunPlan] {
+            [DryRunPlan(statementIndex: statementIndex, subject: subject, sql: nil,
+                        explanation: "Can't estimate affected rows: \(why).")]
+        }
+        switch statement.verb {
+        case "DELETE", "UPDATE":
+            let subject = statement.targetTables.first?.name ?? statement.verb
+            switch rewriteMutation(statement.text, dialect: dialect) {
+            case .success(let sql):
+                return [DryRunPlan(statementIndex: statementIndex, subject: subject, sql: sql,
+                                   explanation: "Rows matched by the WHERE clause.")]
+            case .failure(let why):
+                return cannot(subject, why.reason)
+            }
+        case "TRUNCATE":
+            let cascade = statement.text.range(of: "cascade", options: .caseInsensitive) != nil
+            let plans = statement.targetTables.map { t in
+                DryRunPlan(statementIndex: statementIndex, subject: t.name, sql: countAll(t, dialect),
+                           explanation: cascade ? "All rows in the table (CASCADE also empties referencing tables)." : "All rows in the table.")
+            }
+            return plans.isEmpty ? cannot("TRUNCATE", "table not recognised") : plans
+        case "DROP":
+            if statement.objectType == "TABLE" {
+                let plans = statement.targetTables.map { t in
+                    DryRunPlan(statementIndex: statementIndex, subject: t.name, sql: countAll(t, dialect),
+                               explanation: "All rows in the table that will be dropped.")
+                }
+                return plans.isEmpty ? cannot("DROP TABLE", "table not recognised") : plans
+            }
+            if statement.objectType == "VIEW" { return [] }
+            return cannot("DROP \(statement.objectType ?? "")".trimmingCharacters(in: .whitespaces), "contents are dropped with the object")
+        case "ALTER", "RENAME", "GRANT", "REVOKE":
+            return []
+        default:
+            return cannot(statement.verb.isEmpty ? "statement" : statement.verb, "this kind of statement can't be previewed")
+        }
+    }
+
+    private static func countAll(_ t: TableReference, _ dialect: SQLDialect) -> String {
+        let name = t.schema.map { dialect.quoteIdentifier($0) + "." } ?? ""
+        return "SELECT COUNT(*) FROM " + name + dialect.quoteIdentifier(t.name)
+    }
+
+    struct Failure: Error { var reason: String }
+
+    /// `DELETE FROM t WHERE x` → `SELECT COUNT(*) FROM t WHERE x`, same for UPDATE; otherwise a reason.
+    static func rewriteMutation(_ sql: String, dialect: SQLDialect) -> Result<String, Failure> {
+        let lexer = SQLLexer(dialect)
+        let bytes = Array(sql.utf8)
+        let all = lexer.tokenize(bytes)
+        if all.contains(where: { $0.kind == .versionedComment }) { return .failure(Failure(reason: "executable comment")) }
+        if all.contains(where: { !$0.isTerminated }) { return .failure(Failure(reason: "unterminated quote or comment")) }
+        var t = all.filter { !$0.isTrivia }
+        while let last = t.last, last.isSymbol(";") { t.removeLast() }
+        guard let first = t.first?.keyword else { return .failure(Failure(reason: "empty statement")) }
+
+        func kw(_ i: Int) -> String { i < t.count ? (t[i].keyword ?? "") : "" }
+        func slice(_ from: Int, _ to: Int) -> String {
+            // tokens [from, to) as source text, comments between them included
+            String(decoding: bytes[t[from].range.lowerBound..<t[to - 1].range.upperBound], as: UTF8.self)
+        }
+
+        // Parenthesis depth per token.
+        var depth: [Int] = []
+        var cur = 0
+        for tok in t {
+            if tok.isSymbol("(") { depth.append(cur); cur += 1 }
+            else if tok.isSymbol(")") { cur = max(0, cur - 1); depth.append(cur) }
+            else { depth.append(cur) }
+        }
+        if t.contains(where: { $0.isSymbol("?") || ($0.isSymbol("$")) }) {
+            return .failure(Failure(reason: "statement uses placeholders"))
+        }
+
+        var i = 1
+        switch first {
+        case "DELETE":
+            while ["LOW_PRIORITY", "QUICK", "IGNORE"].contains(kw(i)) { i += 1 }
+            guard kw(i) == "FROM" else { return .failure(Failure(reason: "multi-table DELETE")) }
+            i += 1
+        case "UPDATE":
+            while ["LOW_PRIORITY", "IGNORE"].contains(kw(i)) { i += 1 }
+        default:
+            return .failure(Failure(reason: "not a DELETE or UPDATE"))
+        }
+        if dialect.family == .postgres, kw(i) == "ONLY" { i += 1 }
+
+        // table name (a, a.b, a.b.c)
+        let nameStart = i
+        func isIdent(_ k: Int) -> Bool {
+            k < t.count && (t[k].kind == .quotedIdentifier || (t[k].kind == .word && !reserved.contains(kw(k))))
+        }
+        guard isIdent(i) else { return .failure(Failure(reason: "table name not recognised")) }
+        i += 1
+        while i + 1 < t.count, t[i].isSymbol("."), isIdent(i + 1) { i += 2 }
+        // alias
+        if kw(i) == "AS" { i += 1; guard isIdent(i) else { return .failure(Failure(reason: "alias not recognised")) }; i += 1 }
+        else if isIdent(i) { i += 1 }
+        let tableEnd = i
+
+        if first == "UPDATE" {
+            guard kw(i) == "SET" else { return .failure(Failure(reason: "multi-table UPDATE")) }
+        }
+
+        // Clause scan at depth 0.
+        var whereIdx: Int?
+        var orderIdx: Int?
+        var limitIdx: Int?
+        var tail = i
+        while tail < t.count {
+            if depth[tail] == 0 {
+                switch kw(tail) {
+                case "USING", "JOIN", "INNER", "LEFT", "RIGHT", "CROSS", "STRAIGHT_JOIN":
+                    return .failure(Failure(reason: "statement joins other tables"))
+                case "FROM" where first == "UPDATE":
+                    return .failure(Failure(reason: "UPDATE … FROM joins other tables"))
+                case "WHERE" where whereIdx == nil && orderIdx == nil && limitIdx == nil: whereIdx = tail
+                case "ORDER" where orderIdx == nil && limitIdx == nil: orderIdx = tail
+                case "LIMIT" where limitIdx == nil: limitIdx = tail
+                default: break
+                }
+                if kw(tail) == "RETURNING" { break }
+            }
+            tail += 1
+        }
+        let clauseEnd = tail // tokens[clauseEnd...] is RETURNING … (ignored)
+
+        let table = slice(nameStart, tableEnd)
+        var whereText: String?
+        if let w = whereIdx {
+            let end = orderIdx ?? limitIdx ?? clauseEnd
+            guard end > w + 1 else { return .failure(Failure(reason: "empty WHERE")) }
+            whereText = slice(w + 1, end)
+        }
+
+        if let l = limitIdx {
+            guard dialect.family == .mysql else { return .failure(Failure(reason: "LIMIT on this server")) }
+            guard l + 2 == clauseEnd, t[l + 1].kind == .number, t[l + 1].text.allSatisfy(\.isNumber) else {
+                return .failure(Failure(reason: "LIMIT is not a plain number"))
+            }
+            var inner = "SELECT 1 FROM " + table
+            if let w = whereText { inner += " WHERE " + w }
+            if let o = orderIdx { inner += " " + slice(o, l) }
+            inner += " LIMIT " + t[l + 1].text
+            return .success("SELECT COUNT(*) FROM (" + inner + ") AS qw_dry_run")
+        }
+        // ORDER BY without LIMIT doesn't change which rows match, so it is dropped.
+        var out = "SELECT COUNT(*) FROM " + table
+        if let w = whereText { out += " WHERE " + w }
+        return .success(out)
+    }
+
+    private static let reserved: Set<String> = [
+        "WHERE", "SET", "USING", "ORDER", "LIMIT", "RETURNING", "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "CROSS",
+        "NATURAL", "PARTITION", "USE", "FORCE", "IGNORE", "AS", "WITH", "SELECT", "VALUES", "FULL", "STRAIGHT_JOIN",
+    ]
+}
+
+// MARK: - Dry-run execution
+
+public struct DryRunResult: Sendable, Hashable {
+    public var plan: DryRunPlan
+    /// Rows the statement would affect; nil when not estimated or the count query failed.
+    public var count: Int64?
+    /// Set when the count query itself failed (e.g. the table doesn't exist).
+    public var error: String?
+
+    public init(plan: DryRunPlan, count: Int64?, error: String? = nil) {
+        self.plan = plan
+        self.count = count
+        self.error = error
+    }
+}
+
+/// Runs dry-run count queries (plain SELECTs) on a session.
+public enum DryRunExecutor {
+    public static func run(_ plans: [DryRunPlan], on session: any DatabaseSession) async -> [DryRunResult] {
+        var out: [DryRunResult] = []
+        for plan in plans {
+            guard let sql = plan.sql else {
+                out.append(DryRunResult(plan: plan, count: nil))
+                continue
+            }
+            do {
+                let result = try await session.execute(sql)
+                guard let cell = result.rows.first?.first, let n = count(from: cell) else {
+                    out.append(DryRunResult(plan: plan, count: nil, error: "Unexpected result from the count query."))
+                    continue
+                }
+                out.append(DryRunResult(plan: plan, count: n))
+            } catch let e as DatabaseError {
+                out.append(DryRunResult(plan: plan, count: nil, error: describe(e)))
+            } catch {
+                out.append(DryRunResult(plan: plan, count: nil, error: error.localizedDescription))
+            }
+        }
+        return out
+    }
+
+    static func count(from value: DatabaseValue) -> Int64? {
+        switch value {
+        case .integer(let v): v
+        case .unsignedInteger(let v): Int64(exactly: v)
+        case .double(let v): Int64(exactly: v.rounded())
+        case .text(let s): Int64(s.trimmingCharacters(in: .whitespaces))
+        default: nil
+        }
+    }
+
+    static func describe(_ e: DatabaseError) -> String {
+        switch e {
+        case .query(let message, _): message
+        case .connectionFailed(let m), .authenticationFailed(let m), .tlsFailed(let m), .unsupported(let m): m
+        case .timeout: "The count query timed out."
+        case .sessionClosed: "The connection is closed."
+        }
+    }
+}
