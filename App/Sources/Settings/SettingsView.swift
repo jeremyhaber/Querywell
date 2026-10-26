@@ -56,6 +56,12 @@ private struct GeneralSettings: View {
                 }
                 Text("A preview tab (italic title) is replaced by the next table you click. Double-click the table or tab, or edit, filter or sort, to keep it. ⌘-click always opens a new tab.")
                     .font(.caption).foregroundStyle(Theme.textSecondary)
+                Picker("Selecting a database", selection: model.binding(\.general.databaseSelectionBehaviour)) {
+                    Text("Opens its own window").tag(DatabaseSelectionBehaviour.opensOwnWindow)
+                    Text("Switches this window").tag(DatabaseSelectionBehaviour.switchesWindow)
+                }
+                Text("In a window's database list, ⌥-Return or a right-click does the other one. Each database window has its own connection.")
+                    .font(.caption).foregroundStyle(Theme.textSecondary)
                 Toggle(
                     "Confirm before closing a connected window",
                     isOn: model.binding(\.general.confirmBeforeClosingConnectionWindow))

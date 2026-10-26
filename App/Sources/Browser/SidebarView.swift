@@ -40,7 +40,7 @@ struct WorkspaceSidebar: View {
     private var schemaPicker: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                CaptionLabel(browser.schemaNoun)
+                CaptionLabel("Database")
                 Spacer()
                 Button {
                     workspace.refreshSchema()
@@ -56,16 +56,21 @@ struct WorkspaceSidebar: View {
                 .help("Refresh tables (⌘R)")
                 .accessibilityLabel("Refresh tables")
             }
-            Picker(browser.schemaNoun, selection: Binding(
-                get: { browser.selectedSchema },
-                set: { browser.selectedSchema = $0 }
-            )) {
-                if browser.schemas.isEmpty { Text("No \(browser.schemaNoun.lowercased())s").tag(String?.none) }
-                ForEach(browser.schemas, id: \.self) { Text($0).tag(String?.some($0)) }
+            DatabaseNavigator(workspace: workspace)
+            if workspace.profile.engine == .postgresql {
+                // A Postgres window is one database; its schemas stay a choice inside the window.
+                CaptionLabel(browser.schemaNoun).padding(.top, 4)
+                Picker(browser.schemaNoun, selection: Binding(
+                    get: { browser.selectedSchema },
+                    set: { browser.selectedSchema = $0 }
+                )) {
+                    if browser.schemas.isEmpty { Text("No \(browser.schemaNoun.lowercased())s").tag(String?.none) }
+                    ForEach(browser.schemas, id: \.self) { Text($0).tag(String?.some($0)) }
+                }
+                .labelsHidden()
+                .disabled(browser.schemas.isEmpty)
+                .accessibilityLabel(browser.schemaNoun)
             }
-            .labelsHidden()
-            .disabled(browser.schemas.isEmpty)
-            .accessibilityLabel(browser.schemaNoun)
         }
     }
 
