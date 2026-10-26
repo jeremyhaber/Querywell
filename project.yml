@@ -29,6 +29,10 @@ targets:
       path: App/Resources/Info.plist
       properties:
         CFBundleDisplayName: Querywell
+        # Read the build settings so scripts/bump-version.sh actually changes the shipped version
+        # (XcodeGen otherwise writes a literal "1.0" / "1").
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHumanReadableCopyright: "Copyright © 2026 Jeremy Haber. All rights reserved."
         LSMinimumSystemVersion: "14.0"
@@ -49,7 +53,7 @@ targets:
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
-        MARKETING_VERSION: 0.1.0
+        MARKETING_VERSION: 1.0.0
         CURRENT_PROJECT_VERSION: 1
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         DEAD_CODE_STRIPPING: YES
