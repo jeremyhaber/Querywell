@@ -256,7 +256,8 @@ struct TableTabView: View {
             }
             rowButtons
             Spacer(minLength: 8)
-            FooterButton(title: "Export…") {}.disabled(true).help("Export arrives in Phase 7")
+            FooterButton(title: "Export…") { workspace.presentTableExport(model) }
+                .help("Export this table, with its current filters and sort, to CSV, JSON or SQL INSERT")
             HStack(spacing: 4) {
                 FooterButton(systemImage: "backward.end.fill", label: "First page") { model.firstPage() }
                     .disabled(!info.hasPrevious)

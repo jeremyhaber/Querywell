@@ -224,6 +224,11 @@ struct WorkspaceSidebar: View {
             NSPasteboard.general.setString(name, forType: .string)
         }
         Divider()
+        Button(targets.count > 1 ? "Export… (\(targets.count) tables)" : "Export…") {
+            let names = Set(targets.map(\.ref.name))
+            Task { await workspace.presentExport(only: names) }
+        }
+        .help("Export the selected tables as an SQL dump")
         Button(targets.count > 1 ? "Table Operations… (\(targets.count) tables)" : "Table Operations…") {
             workspace.presentTableOperations(for: targets)
         }
@@ -354,6 +359,12 @@ struct TabContentView: View {
                 .id(tab.id)
         } else if case .query = tab.kind, let model = workspace.queryModel(forTab: tab) {
             QueryTabView(model: model, workspace: workspace)
+                .id(tab.id)
+        } else if case .console = tab.kind, let model = workspace.consoleModel(forTab: tab) {
+            ConsoleTabView(model: model, workspace: workspace)
+                .id(tab.id)
+        } else if case .terminal = tab.kind, let model = workspace.terminalModel(forTab: tab) {
+            TerminalTabView(model: model, workspace: workspace)
                 .id(tab.id)
         } else {
             placeholder(for: tab)

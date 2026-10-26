@@ -35,6 +35,8 @@ final class ConnectionWorkspace: Identifiable {
     var closePrompt: TabClosePrompt?
     /// The open "Table Operations" sheet, if any.
     var batchOperations: BatchOperationsModel?
+    /// Console, terminal, export and import state (Phase 7).
+    let tools = WorkspaceTools()
 
     @ObservationIgnored private(set) var live: LiveConnection?
     @ObservationIgnored weak var window: NSWindow?
@@ -160,6 +162,7 @@ final class ConnectionWorkspace: Identifiable {
     /// Final: the window is going away.
     func close() async {
         isClosed = true
+        tools.shutdown()
         await teardown()
         state = .idle
     }

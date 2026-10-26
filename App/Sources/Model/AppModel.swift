@@ -333,6 +333,7 @@ final class AppModel {
             return nil
         }
         let workspace = ConnectionWorkspace(profile: profile, opener: opener, queryServices: queryServices)
+        workspace.tools.secretStore = secretStore
         workspace.savedFiltersStore = savedFiltersStore
         workspaces[workspace.id] = workspace
         do {

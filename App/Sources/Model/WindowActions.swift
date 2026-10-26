@@ -15,6 +15,10 @@ struct WindowActions {
     var selectTab: ((Int) -> Void)?
     var nextTab: (() -> Void)?
     var previousTab: (() -> Void)?
+    /// File ▸ Export Database… (⇧⌘E); `nil` when not connected.
+    var exportDatabase: (() -> Void)?
+    /// File ▸ Import SQL… (⇧⌘I); `nil` when not connected or read-only.
+    var importSQL: (() -> Void)?
     var quickOpen: () -> Void
 }
 

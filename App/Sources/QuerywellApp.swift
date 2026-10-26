@@ -114,6 +114,15 @@ struct AppCommands: Commands {
             .keyboardShortcut("w")
         }
 
+        CommandGroup(after: .importExport) {
+            Button("Export Database…") { actions?.exportDatabase?() }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+                .disabled(actions?.exportDatabase == nil)
+            Button("Import SQL…") { actions?.importSQL?() }
+                .keyboardShortcut("i", modifiers: [.command, .shift])
+                .disabled(actions?.importSQL == nil)
+        }
+
         CommandGroup(after: .windowArrangement) {
             Divider()
             Button("Connections") { openWindow(id: "launcher") }

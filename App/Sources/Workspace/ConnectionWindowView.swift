@@ -82,8 +82,12 @@ struct ConnectionWindowContent: View {
             .focusedSceneValue(\.windowActions, windowActions)
             .task { await workspace.startIfNeeded() }
             .task { await workspace.queryLibrary.refreshAllSaved() }
-            .onAppear { workspace.safety = model.settings.safety }
+            .onAppear {
+                workspace.safety = model.settings.safety
+                workspace.tools.consoleSettings = model.settings.console
+            }
             .onChange(of: model.settings.safety) { _, new in workspace.safety = new }
+            .onChange(of: model.settings.console) { _, new in workspace.tools.consoleSettings = new }
             .confirmationDialog(
                 workspace.closePrompt.map { "“\($0.title)” has unsaved edits" } ?? "Unsaved edits",
                 isPresented: Binding(get: { workspace.closePrompt != nil }, set: { if !$0 { workspace.closePrompt = nil } }),
@@ -101,6 +105,7 @@ struct ConnectionWindowContent: View {
                 }
             }
             .appAlert()
+            .transferSheets(for: workspace)
     }
 
     private var windowActions: WindowActions {
@@ -115,6 +120,8 @@ struct ConnectionWindowContent: View {
             selectTab: { workspace.selectTab(at: $0) },
             nextTab: { workspace.tabs.selectNext() },
             previousTab: { workspace.tabs.selectPrevious() },
+            exportDatabase: workspace.isConnected ? { Task { await workspace.presentExport() } } : nil,
+            importSQL: workspace.isConnected && !workspace.profile.effectiveReadOnly ? { workspace.presentImport(file: nil) } : nil,
             quickOpen: {
                 showSwitcher.toggle()
                 if showSwitcher { Task { await workspace.queryLibrary.refreshAllSaved() } }

@@ -48,7 +48,8 @@ struct TabStripView: View {
         Menu {
             Button("New Query") { workspace.newQuery() }
             Button("Console") { workspace.openConsole() }
-            Button("Terminal") { workspace.openTerminal() }
+            Button("SSH Terminal") { workspace.openTerminal() }
+                .disabled(workspace.profile.ssh == nil)
         } label: {
             Image(systemName: "plus")
                 .font(.system(size: 13, weight: .medium))

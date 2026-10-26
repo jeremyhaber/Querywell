@@ -94,6 +94,16 @@ private struct EditorSettings: View {
                 }
                 Toggle("Show line numbers", isOn: model.binding(\.editor.showLineNumbers))
             }
+            Section("SQL console") {
+                Toggle("Show full cell contents", isOn: model.binding(\.console.showFullCells))
+                Stepper(
+                    value: model.binding(\.console.maxCellWidth),
+                    in: AppSettings.Console.maxCellWidthRange, step: 8
+                ) {
+                    LabeledContent("Truncate cells at", value: "\(model.settings.console.maxCellWidth) characters")
+                }
+                .disabled(model.settings.console.showFullCells)
+            }
         }
         .formStyle(.grouped)
     }

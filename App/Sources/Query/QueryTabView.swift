@@ -297,12 +297,13 @@ struct QueryTabView: View {
             }
             Spacer(minLength: 8)
             Menu("Export") {
-                Button("CSV…") {}.disabled(true)
-                Button("JSON…") {}.disabled(true)
+                Button("CSV…") { exportSelected(.csv) }
+                Button("JSON…") { exportSelected(.json) }
+                Button("SQL INSERT…") { exportSelected(.sql) }
             }
             .menuStyle(.button).buttonStyle(OutlineButtonStyle()).fixedSize()
-            .disabled(true)
-            .help("Exporting results arrives with the export tools (Phase 7). Copy as CSV works now.")
+            .disabled(model.selectedItem?.result == nil)
+            .help("Export the selected result set to a file")
             Button("Copy as CSV") {
                 if let csv = model.csvOfSelectedResult() {
                     copyToPasteboard(csv)
@@ -318,6 +319,14 @@ struct QueryTabView: View {
         .background(Theme.sidebar)
         .overlay(alignment: .top) { Theme.separator.frame(height: 1) }
         .accessibilityElement(children: .contain)
+    }
+
+    private func exportSelected(_ kind: ResultExportModel.Kind) {
+        guard let item = model.selectedItem, let result = item.result else { return }
+        let rows = model.selectedItem?.editModel?.content?.rows ?? result.rows
+        var exported = result
+        exported.rows = rows
+        workspace.presentResultExport(exported, name: "Result \(item.statementIndex + 1)", kind: kind)
     }
 
     private var guardSymbol: String {
