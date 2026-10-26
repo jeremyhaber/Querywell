@@ -152,3 +152,44 @@ struct WorkspaceTabsTests {
         #expect(s2.tab(id: id8)?.title == "Query 8")
     }
 }
+
+@Suite("Query tabs")
+struct QueryTabStateTests {
+    @Test func savedQueryTabsAreReusedAndKeepText() throws {
+        var t = WorkspaceTabs()
+        let saved = UUID()
+        let a = t.openSavedQuery(id: saved, name: "Drafts", sql: "SELECT 1")
+        #expect(t.tab(id: a)?.title == "Drafts")
+        #expect(t.tab(id: a)?.queryText == "SELECT 1")
+        let other = t.newQuery()
+        #expect(t.selectedID == other)
+        #expect(t.openSavedQuery(id: saved, name: "Drafts", sql: "ignored") == a)
+        #expect(t.selectedID == a && t.tabs.count == 2)
+
+        t.setQueryText(id: other, "SELECT 2")
+        t.link(id: other, savedQueryID: UUID(), title: "Two")
+        let data = try JSONEncoder().encode(t)
+        let back = try JSONDecoder().decode(WorkspaceTabs.self, from: data)
+        #expect(back.tab(id: other)?.queryText == "SELECT 2")
+        #expect(back.tab(id: other)?.title == "Two")
+        #expect(back.tab(id: other)?.savedQueryID != nil)
+    }
+
+    @Test func oldTabJSONWithoutQueryFieldsStillDecodes() throws {
+        let id = UUID()
+        let json = """
+        {"tabs":[{"id":"\(id.uuidString)","kind":{"query":{"number":3}},"title":"Query 3","isDirty":false}],"nextQueryNumber":4}
+        """
+        let t = try JSONDecoder().decode(WorkspaceTabs.self, from: Data(json.utf8))
+        #expect(t.tabs.first?.queryText == nil)
+        #expect(t.tabs.first?.title == "Query 3")
+    }
+
+    @Test func newQueryWithTextFillsTheTab() {
+        var t = WorkspaceTabs()
+        let id = t.newQuery(text: "SELECT now()")
+        #expect(t.tab(id: id)?.queryText == "SELECT now()")
+        t.rename(id: id, to: "Now")
+        #expect(t.tab(id: id)?.title == "Now")
+    }
+}

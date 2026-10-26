@@ -163,11 +163,30 @@ public struct AppSettings: Codable, Sendable, Equatable {
         public var provider: AIProviderID?
         public var model: String?
         public var includeSampleRowsByDefault: Bool
+        /// Per-connection override of ``includeSampleRowsByDefault``, keyed by the connection profile's
+        /// UUID string. Sample rows are only ever sent for connections the user turned this on for.
+        public var sampleRowsByConnection: [String: Bool]
 
-        public init(provider: AIProviderID? = nil, model: String? = nil, includeSampleRowsByDefault: Bool = false) {
+        public init(provider: AIProviderID? = nil, model: String? = nil, includeSampleRowsByDefault: Bool = false,
+                    sampleRowsByConnection: [String: Bool] = [:]) {
             self.provider = provider
             self.model = model
             self.includeSampleRowsByDefault = includeSampleRowsByDefault
+            self.sampleRowsByConnection = sampleRowsByConnection
+        }
+
+        /// Whether the assistant may send sample rows of this connection's tables.
+        public func includesSampleRows(for connectionID: UUID) -> Bool {
+            sampleRowsByConnection[connectionID.uuidString] ?? includeSampleRowsByDefault
+        }
+
+        public mutating func setIncludesSampleRows(_ on: Bool, for connectionID: UUID) {
+            sampleRowsByConnection[connectionID.uuidString] = on
+        }
+
+        /// Forgets the per-connection choice (the connection was deleted).
+        public mutating func forgetConnection(_ connectionID: UUID) {
+            sampleRowsByConnection.removeValue(forKey: connectionID.uuidString)
         }
 
         public init(from decoder: any Decoder) throws {
@@ -175,6 +194,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
             provider = (try? c.decodeIfPresent(AIProviderID.self, forKey: .provider)) ?? nil
             model = (try? c.decodeIfPresent(String.self, forKey: .model)) ?? nil
             includeSampleRowsByDefault = c.value(.includeSampleRowsByDefault, false)
+            sampleRowsByConnection = c.value(.sampleRowsByConnection, [:])
         }
     }
 

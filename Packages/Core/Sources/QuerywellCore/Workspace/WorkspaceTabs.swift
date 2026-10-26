@@ -34,12 +34,19 @@ public struct WorkspaceTab: Identifiable, Hashable, Sendable, Codable {
     public var title: String
     /// Has unsaved content (shown as a dot / used for close confirmation).
     public var isDirty: Bool
+    /// Query tabs: the editor text, kept so it survives a window restore. Nil for other kinds.
+    public var queryText: String?
+    /// Query tabs opened from (or saved as) a saved query.
+    public var savedQueryID: UUID?
 
-    public init(id: UUID = UUID(), kind: Kind, title: String, isDirty: Bool = false) {
+    public init(id: UUID = UUID(), kind: Kind, title: String, isDirty: Bool = false,
+                queryText: String? = nil, savedQueryID: UUID? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
         self.isDirty = isDirty
+        self.queryText = queryText
+        self.savedQueryID = savedQueryID
     }
 
     /// Dot colour role for this tab.
@@ -86,6 +93,30 @@ public struct WorkspaceTabs: Hashable, Sendable, Codable {
     }
 
     /// Selects the console tab, creating it if there is none (at most one console).
+    /// Opens a query tab for a saved query: focuses the tab already showing it, otherwise a new one
+    /// titled with the query's name.
+    @discardableResult
+    public mutating func openSavedQuery(id: UUID, name: String, sql: String) -> WorkspaceTab.ID {
+        if let existing = tabs.first(where: { $0.savedQueryID == id }) {
+            selectedID = existing.id
+            return existing.id
+        }
+        let number = nextQueryNumber
+        nextQueryNumber += 1
+        let tab = WorkspaceTab(kind: .query(number: number), title: name, queryText: sql, savedQueryID: id)
+        tabs.append(tab)
+        selectedID = tab.id
+        return tab.id
+    }
+
+    /// Opens a new query tab pre-filled with `text` (history "open in new tab").
+    @discardableResult
+    public mutating func newQuery(text: String) -> WorkspaceTab.ID {
+        let id = newQuery()
+        setQueryText(id: id, text)
+        return id
+    }
+
     @discardableResult
     public mutating func openConsole() -> WorkspaceTab.ID {
         open(kind: .console, title: "Console", reuseExisting: true)
@@ -163,6 +194,21 @@ public struct WorkspaceTabs: Hashable, Sendable, Codable {
 
     /// Reorders tabs with the same semantics as SwiftUI's `onMove`: `offset` is a position
     /// in the array *before* removal. Selection follows the tab, not the position.
+    public mutating func setQueryText(id: WorkspaceTab.ID, _ text: String) {
+        if let i = tabs.firstIndex(where: { $0.id == id }), tabs[i].queryText != text { tabs[i].queryText = text }
+    }
+
+    public mutating func rename(id: WorkspaceTab.ID, to title: String) {
+        if let i = tabs.firstIndex(where: { $0.id == id }) { tabs[i].title = title }
+    }
+
+    /// Links (or unlinks) a query tab to a saved query; a linked tab takes the saved query's name.
+    public mutating func link(id: WorkspaceTab.ID, savedQueryID: UUID?, title: String? = nil) {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return }
+        tabs[i].savedQueryID = savedQueryID
+        if let title { tabs[i].title = title }
+    }
+
     public mutating func move(fromOffsets source: IndexSet, toOffset offset: Int) {
         let valid = source.filter { tabs.indices.contains($0) }
         guard !valid.isEmpty else { return }

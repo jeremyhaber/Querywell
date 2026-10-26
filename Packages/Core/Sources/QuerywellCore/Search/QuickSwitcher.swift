@@ -24,6 +24,7 @@ public enum QuickSwitcherItem: Hashable, Sendable {
     case openTab(WorkspaceTab.ID, title: String)
     case table(database: String, name: String)
     case action(QuickAction)
+    case savedQuery(UUID, name: String)
 
     /// The text that is fuzzy-matched and shown as the row title.
     public var title: String {
@@ -32,6 +33,7 @@ public enum QuickSwitcherItem: Hashable, Sendable {
         case .openTab(_, let title): title
         case .table(_, let name): name
         case .action(let action): action.title
+        case .savedQuery(_, let name): "Saved: \(name)"
         }
     }
 
@@ -48,13 +50,14 @@ public enum QuickSwitcherItem: Hashable, Sendable {
         case .table: .table
         case .connection: .connection
         case .action: .action
+        case .savedQuery: .savedQuery
         }
     }
 }
 
 /// Section of the quick switcher, in display priority order.
 public enum QuickSwitcherCategory: Int, Sendable, Hashable, Comparable, CaseIterable {
-    case openTab, table, connection, action
+    case openTab, table, savedQuery, connection, action
 
     public static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
 
@@ -63,6 +66,7 @@ public enum QuickSwitcherCategory: Int, Sendable, Hashable, Comparable, CaseIter
         switch self {
         case .openTab: "Open Tabs"
         case .table: "Tables"
+        case .savedQuery: "Saved Queries"
         case .connection: "Connections"
         case .action: "Actions"
         }

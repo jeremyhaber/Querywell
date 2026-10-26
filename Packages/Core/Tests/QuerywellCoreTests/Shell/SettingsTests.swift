@@ -156,3 +156,27 @@ struct AppSettingsStoreTests {
         #expect(s.deletingLastPathComponent().lastPathComponent.hasPrefix("QuerywellTest-"))
     }
 }
+
+@Suite("AI sample rows per connection")
+struct SampleRowsPreferenceTests {
+    @Test func defaultsOffAndOverridesPerConnection() throws {
+        var ai = AppSettings.AI()
+        let a = UUID(), b = UUID()
+        #expect(!ai.includesSampleRows(for: a))
+        ai.setIncludesSampleRows(true, for: a)
+        #expect(ai.includesSampleRows(for: a) && !ai.includesSampleRows(for: b))
+        ai.includeSampleRowsByDefault = true
+        #expect(ai.includesSampleRows(for: b))
+        ai.setIncludesSampleRows(false, for: b)
+        #expect(!ai.includesSampleRows(for: b))
+        ai.forgetConnection(a)
+        #expect(ai.includesSampleRows(for: a))  // falls back to the default
+        let back = try JSONDecoder().decode(AppSettings.AI.self, from: JSONEncoder().encode(ai))
+        #expect(back == ai)
+    }
+
+    @Test func oldSettingsWithoutTheFieldDecode() throws {
+        let ai = try JSONDecoder().decode(AppSettings.AI.self, from: Data(#"{"includeSampleRowsByDefault":true}"#.utf8))
+        #expect(ai.sampleRowsByConnection.isEmpty && ai.includeSampleRowsByDefault)
+    }
+}
