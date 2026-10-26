@@ -277,7 +277,7 @@ struct SearchReplaceSheet: View {
                 if model.confirmingApply {
                     Button("Not Now") { model.cancelApplyConfirmation() }
                     Button { Task { await model.confirmApply() } } label: { Text("Replace \(model.previewTotals.rows.formatted()) Row\(model.previewTotals.rows == 1 ? "" : "s")") }
-                        .buttonStyle(AccentFillButtonStyle(tint: model.isProduction ? Theme.tagProduction : nil))
+                        .buttonStyle(AccentFillButtonStyle(tint: model.isProduction ? Theme.prodBadgeFill : nil))
                 } else {
                     Button { model.beginApply() } label: { Text("Replace…") }
                         .buttonStyle(AccentFillButtonStyle())

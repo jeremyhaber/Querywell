@@ -15,41 +15,61 @@ extension NSColor {
             alpha: 1)
     }
 
+    /// Tests cannot instantiate the system's high-contrast appearances, so they resolve colours with this
+    /// per-thread switch instead (a real Mac reaches the same branch through `bestMatch`).
+    static let forceIncreasedContrastKey = "querywell.forceIncreasedContrast"
+    private static var forcesIncreasedContrast: Bool {
+        (Thread.current.threadDictionary[forceIncreasedContrastKey] as? Bool) ?? false
+    }
+
     /// A colour that resolves to `light` or `dark` with the effective appearance.
-    static func dynamic(light: UInt32, dark: UInt32) -> NSColor {
+    /// `lightHC` / `darkHC` are used under System Settings > Accessibility > Display > Increase contrast
+    /// (the `accessibilityHighContrast*` appearances); they default to the normal value.
+    static func dynamic(light: UInt32, dark: UInt32, lightHC: UInt32? = nil, darkHC: UInt32? = nil) -> NSColor {
         NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return NSColor(hex: isDark ? dark : light)
+            // Prefer the exact name (the high-contrast appearances), then fall back to the closest match.
+            let names: [NSAppearance.Name] = [.accessibilityHighContrastDarkAqua, .accessibilityHighContrastAqua, .darkAqua, .aqua]
+            var match = names.contains(appearance.name) ? appearance.name : (appearance.bestMatch(from: names) ?? .aqua)
+            if Self.forcesIncreasedContrast {
+                match = match == .darkAqua ? .accessibilityHighContrastDarkAqua : (match == .aqua ? .accessibilityHighContrastAqua : match)
+            }
+            switch match {
+            case .accessibilityHighContrastDarkAqua: return NSColor(hex: darkHC ?? dark)
+            case .accessibilityHighContrastAqua: return NSColor(hex: lightHC ?? light)
+            case .darkAqua: return NSColor(hex: dark)
+            default: return NSColor(hex: light)
+            }
         }
     }
 }
 
 /// AppKit flavours of the tokens (for AppKit drawing).
 enum ThemeNS {
-    static var accent: NSColor { .dynamic(light: 0x2459D6, dark: 0x3E6FE0) }
-    static var accentText: NSColor { .dynamic(light: 0x2459D6, dark: 0x8AB0FF) }
-    static var accentSubtleBackground: NSColor { .dynamic(light: 0xE3EBFB, dark: 0x24365F) }
+    static var accent: NSColor { .dynamic(light: 0x2459D6, dark: 0x3E70E0) }
+    static var accentText: NSColor { .dynamic(light: 0x2459D6, dark: 0x8AB0FF, lightHC: 0x1A43A8, darkHC: 0xA3C2FF) }
+    static var accentSubtleBackground: NSColor { .dynamic(light: 0xE3EBFB, dark: 0x24365F, lightHC: 0xD0DDFA, darkHC: 0x2B4378) }
     static var accentSubtleText: NSColor { .dynamic(light: 0x173E99, dark: 0xB5CBFF) }
-    static var selectedRow: NSColor { .dynamic(light: 0xEEF3FD, dark: 0x25304A) }
-    static var cardSelectedBorder: NSColor { .dynamic(light: 0x9DB6EE, dark: 0x5E86E0) }
+    static var selectedRow: NSColor { .dynamic(light: 0xEEF3FD, dark: 0x25304A, lightHC: 0xD9E4FB, darkHC: 0x2F3F66) }
+    static var cardSelectedBorder: NSColor { .dynamic(light: 0x5681E2, dark: 0x5E86E0, lightHC: 0x2459D6, darkHC: 0x8AB0FF) }
+    static var chipRemoveBackground: NSColor { .dynamic(light: 0xC9D7F5, dark: 0x3A507F) }
 
     static var background: NSColor { .dynamic(light: 0xFFFFFF, dark: 0x1E1F23) }
     static var elevated: NSColor { .dynamic(light: 0xFFFFFF, dark: 0x2C2D33) }
     static var chrome: NSColor { .dynamic(light: 0xF6F6F8, dark: 0x2A2B30) }
     static var sidebar: NSColor { .dynamic(light: 0xFAFAFB, dark: 0x25262B) }
-    static var separator: NSColor { .dynamic(light: 0xE2E3E8, dark: 0x3A3C43) }
-    static var separatorStrong: NSColor { .dynamic(light: 0xB9BBC4, dark: 0x6A6D78) }
-    static var gridRule: NSColor { .dynamic(light: 0xF0F1F4, dark: 0x2E3036) }
+    static var separator: NSColor { .dynamic(light: 0xE2E3E8, dark: 0x3A3C43, lightHC: 0x84879A, darkHC: 0x80838F) }
+    static var separatorStrong: NSColor { .dynamic(light: 0x888B9B, dark: 0x757884, lightHC: 0x5C5F6A, darkHC: 0xA6A9B4) }
+    static var gridRule: NSColor { .dynamic(light: 0xF0F1F4, dark: 0x2E3036, lightHC: 0xC4C6CE, darkHC: 0x55575F) }
 
-    static var text: NSColor { .dynamic(light: 0x1C1D22, dark: 0xECEDF0) }
-    static var textSecondary: NSColor { .dynamic(light: 0x5C5F6A, dark: 0xA6A9B4) }
-    // Slightly darker than the mockup's #8A8D98 so it passes 4.5:1 on white.
-    static var textTertiary: NSColor { .dynamic(light: 0x727581, dark: 0x8F929E) }
-    static var chipBackground: NSColor { .dynamic(light: 0xEFF0F3, dark: 0x363840) }
+    static var text: NSColor { .dynamic(light: 0x1C1D22, dark: 0xECEDF0, lightHC: 0x000000, darkHC: 0xFFFFFF) }
+    static var textSecondary: NSColor { .dynamic(light: 0x5C5F6A, dark: 0xA6A9B4, lightHC: 0x3C3F4A, darkHC: 0xD0D2DA) }
+    // Darker than the mockup's #8A8D98 so it passes 4.5:1 on every surface, including chrome and sidebar.
+    static var textTertiary: NSColor { .dynamic(light: 0x6B6E7A, dark: 0x9497A2, lightHC: 0x50535F, darkHC: 0xB4B7C3) }
+    static var chipBackground: NSColor { .dynamic(light: 0xEFF0F3, dark: 0x363840, lightHC: 0xDEE0E6, darkHC: 0x45474F) }
     static var chipText: NSColor { .dynamic(light: 0x45474F, dark: 0xC4C6CF) }
 
     static var tagProduction: NSColor { .dynamic(light: 0xC4314B, dark: 0xE5566E) }
-    static var tagStaging: NSColor { .dynamic(light: 0xE0A030, dark: 0xF0B84A) }
+    static var tagStaging: NSColor { .dynamic(light: 0xBE831C, dark: 0xF0B84A) }
     static var tagLocal: NSColor { .dynamic(light: 0x2E9E5B, dark: 0x4CC37D) }
     /// Fill of the "PROD" badge; white text on it is 5.4:1 in both appearances.
     static var prodBadgeFill: NSColor { NSColor(hex: 0xC4314B) }
@@ -60,6 +80,8 @@ enum ThemeNS {
     static var warningBackground: NSColor { .dynamic(light: 0xFFF7E6, dark: 0x3D3114) }
     static var dangerText: NSColor { .dynamic(light: 0xB3261E, dark: 0xFF8A80) }
     static var dangerBackground: NSColor { .dynamic(light: 0xFDECEE, dark: 0x45202A) }
+    /// Fill of destructive buttons (white text on it).
+    static var dangerFill: NSColor { .dynamic(light: 0xB3261E, dark: 0xC4314B) }
 
     static var tabQuery: NSColor { .dynamic(light: 0x6A3FC2, dark: 0xA98BF0) }
 
@@ -69,18 +91,18 @@ enum ThemeNS {
     static var syntaxFunction: NSColor { .dynamic(light: 0x0F6E8C, dark: 0x56C1E0) }
     static var syntaxNumber: NSColor { .dynamic(light: 0xB05A00, dark: 0xE8A25C) }
     /// The design's #8A8D98 is 3.3:1 on white; this is the darker tertiary text shade (4.5:1).
-    static var syntaxComment: NSColor { .dynamic(light: 0x727581, dark: 0x8F929E) }
+    static var syntaxComment: NSColor { .dynamic(light: 0x6B6E7A, dark: 0x9497A2, lightHC: 0x50535F, darkHC: 0xB4B7C3) }
     static var syntaxVariable: NSColor { .dynamic(light: 0x9C3F8F, dark: 0xE08AD6) }
     static var editorCurrentLine: NSColor { .dynamic(light: 0xF5F7FC, dark: 0x262A33) }
     static var editorBracketMatch: NSColor { .dynamic(light: 0xD3E0FA, dark: 0x34518A) }
-    static var editorLineNumber: NSColor { .dynamic(light: 0x8A8D98, dark: 0x7E818D) }
+    static var editorLineNumber: NSColor { .dynamic(light: 0x6D707C, dark: 0x8F929C, lightHC: 0x50535F, darkHC: 0xB4B7C3) }
     static var warningAmberFill: NSColor { .dynamic(light: 0xFFF1CC, dark: 0x4A3B12) }
 
     // Phase 4 (data grid).
     static var pendingEditCell: NSColor { .dynamic(light: 0xFFF4D6, dark: 0x4A3B12) }
-    static var pendingEditBar: NSColor { .dynamic(light: 0xD48806, dark: 0xE8A33A) }
+    static var pendingEditBar: NSColor { .dynamic(light: 0xC17C05, dark: 0xE8A33A) }
     static var pendingPillBackground: NSColor { .dynamic(light: 0xFFF7E6, dark: 0x3D3114) }
-    static var pendingPillBorder: NSColor { .dynamic(light: 0xE8B04A, dark: 0x8A6A25) }
+    static var pendingPillBorder: NSColor { .dynamic(light: 0xBB8118, dark: 0x9C782A) }
     static var pendingPillText: NSColor { .dynamic(light: 0x7A4B00, dark: 0xF2CD83) }
     /// Fields in the inspector that carry a pending edit (mockup: border #E8B04A, bg #FFFBF0).
     static var pendingFieldBackground: NSColor { .dynamic(light: 0xFFFBF0, dark: 0x352C12) }
@@ -148,7 +170,8 @@ enum Theme {
     static var pendingInsertedText: Color { Color(nsColor: ThemeNS.pendingInsertedText) }
     static var pillPositiveBackground: Color { Color(nsColor: ThemeNS.pillPositiveBackground) }
     static var pillPositiveText: Color { Color(nsColor: ThemeNS.pillPositiveText) }
-    static var chipRemoveBackground: Color { Color(nsColor: .dynamic(light: 0xC9D7F5, dark: 0x3A507F)) }
+    static var chipRemoveBackground: Color { Color(nsColor: ThemeNS.chipRemoveBackground) }
+    static var dangerFill: Color { Color(nsColor: ThemeNS.dangerFill) }
 
     // Radii (design): window 12, cards 10, controls 8, small 6, badges 4.
     static let cardRadius: CGFloat = 10

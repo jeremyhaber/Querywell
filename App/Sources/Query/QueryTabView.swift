@@ -96,7 +96,7 @@ struct QueryTabView: View {
                         Text("Stop").font(.system(size: 13, weight: .medium))
                     }
                 }
-                .buttonStyle(AccentFillButtonStyle(tint: Theme.dangerText))
+                .buttonStyle(AccentFillButtonStyle(tint: Theme.dangerFill))
                 .help("Stop: cancels the running statement on the server and skips the rest")
             } else {
                 runButton

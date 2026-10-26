@@ -223,7 +223,7 @@ struct AIAssistantPanel: View {
             HStack(spacing: 6) {
                 if model.isBusy {
                     Button { model.stop() } label: { Label("Stop", systemImage: "stop.fill") }
-                        .buttonStyle(AccentFillButtonStyle(tint: Theme.dangerText))
+                        .buttonStyle(AccentFillButtonStyle(tint: Theme.dangerFill))
                 } else {
                     Button { model.generate() } label: {
                         HStack(spacing: 4) { Text("Generate"); Text("⌘↵").font(.system(size: 10)).opacity(0.85) }
