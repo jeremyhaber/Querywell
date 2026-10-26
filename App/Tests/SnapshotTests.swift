@@ -59,7 +59,11 @@ struct SnapshotTests {
         return id
     }
 
-    private func render<V: View>(_ view: V, model: AppModel, size: CGSize, name: String) async throws {
+    private func render<V: View>(
+        _ view: V, model: AppModel, size: CGSize, name: String,
+        prepare: ((NSWindow) async throws -> Void)? = nil,
+        extra: ((NSWindow, String) async throws -> Void)? = nil
+    ) async throws {
         for (suffix, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             let host = NSHostingController(rootView: view.environment(model))
             host.sceneBridgingOptions = [.toolbars, .title]
@@ -74,15 +78,105 @@ struct SnapshotTests {
             window.orderFrontRegardless()
             // Let SwiftUI lay out, run onAppear tasks and settle.
             try await Task.sleep(for: .seconds(2))  // never RunLoop.run: it blocks the main actor, so SwiftUI layout stalls
+            if let prepare {
+                try await prepare(window)
+                try await Task.sleep(for: .seconds(0.8))
+            }
             // Real window-server output: cacheDisplay doesn't draw macOS 26 toolbar glass correctly
             // (it produced phantom shapes). Capturing our own window needs no Screen Recording permission.
             let image = try #require(Self.captureWindow(window.windowNumber))
             let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
             try png.write(to: outputDirectory.appendingPathComponent("\(name)-\(suffix).png"))
+            try await extra?(window, suffix)
             // Hide, don't close: closing a connection window (correctly) closes its workspace,
             // and these renders reuse one live connection.
             window.orderOut(nil)
         }
+    }
+
+    /// Polls `condition` (on the main actor) until it holds or `timeout` passes.
+    private func waitUntil(_ timeout: Duration = .seconds(15), _ condition: () -> Bool) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while !condition(), clock.now < deadline { try await Task.sleep(for: .milliseconds(100)) }
+    }
+
+    private static func findView<T: NSView>(_ type: T.Type, in root: NSView) -> T? {
+        if let match = root as? T { return match }
+        for sub in root.subviews { if let found = findView(type, in: sub) { return found } }
+        return nil
+    }
+
+    /// A WordPress-like fixture in `querywell_test`: idempotent, safe to run on every snapshot run.
+    private func createWordPressFixture(_ session: any DatabaseSession) async throws {
+        let statements = [
+            """
+            CREATE TABLE IF NOT EXISTS wp_users (
+              ID bigint unsigned NOT NULL AUTO_INCREMENT,
+              user_login varchar(60) NOT NULL DEFAULT '',
+              user_email varchar(100) NOT NULL DEFAULT '',
+              display_name varchar(250) NOT NULL DEFAULT '',
+              user_registered datetime NOT NULL DEFAULT '2020-01-01 00:00:00',
+              PRIMARY KEY (ID), KEY user_login_key (user_login)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS wp_posts (
+              ID bigint unsigned NOT NULL AUTO_INCREMENT,
+              post_author bigint unsigned NOT NULL DEFAULT 0,
+              post_date datetime NOT NULL DEFAULT '2020-01-01 00:00:00',
+              post_content longtext,
+              post_title text,
+              post_status varchar(20) NOT NULL DEFAULT 'publish',
+              post_name varchar(200) NOT NULL DEFAULT '',
+              post_modified datetime NOT NULL DEFAULT '2020-01-01 00:00:00',
+              post_type varchar(20) NOT NULL DEFAULT 'post',
+              PRIMARY KEY (ID), KEY post_name (post_name(191)),
+              KEY type_status_date (post_type, post_status, post_date, ID), KEY post_author (post_author),
+              CONSTRAINT fk_posts_author FOREIGN KEY (post_author) REFERENCES wp_users (ID) ON DELETE CASCADE ON UPDATE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS wp_postmeta (
+              meta_id bigint unsigned NOT NULL AUTO_INCREMENT,
+              post_id bigint unsigned NOT NULL DEFAULT 0,
+              meta_key varchar(255) DEFAULT NULL,
+              meta_value longtext,
+              PRIMARY KEY (meta_id), KEY post_id (post_id), KEY meta_key (meta_key(191))
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """,
+            "REPLACE INTO wp_users (ID, user_login, user_email, display_name, user_registered) VALUES "
+                + "(1, 'jeremy', 'jeremy@example.com', 'Jeremy Haber', '2019-03-02 10:00:00'), "
+                + "(2, 'admin', 'admin@example.com', 'Site Admin', '2018-01-15 09:30:00'), "
+                + "(3, 'editor', 'editor@example.com', 'Ed Itor', '2021-07-09 14:12:00')",
+        ]
+        for sql in statements { _ = try await session.execute(sql) }
+
+        let titles = ["Home", "About", "Services", "Contact", "Privacy Policy", "Pricing", "Case Studies", "Careers", "FAQ",
+                      "Book a Call", "Terms", "Thank You", "Our Team", "Press", "Partners", "Blog", "Support", "Docs", "Status", "Roadmap"]
+        let statuses = ["publish", "publish", "publish", "draft", "private", "publish", "trash", "publish", "publish", "draft"]
+        var posts: [String] = []
+        for i in 0..<50 {
+            let id = 1038 + i * 2
+            let title = titles[i % titles.count] + (i >= titles.count ? " \(i / titles.count + 1)" : "")
+            let slug = title.lowercased().replacingOccurrences(of: " ", with: "-")
+            let author = [1, 1, 2, 1, 3][i % 5]
+            let day = 1 + (i * 3) % 27
+            let month = 5 + (i % 6)
+            let type = i % 7 == 0 ? "post" : "page"
+            let content = i % 4 == 0 ? "<!-- wp:heading -->\n<h2>What we do</h2>\n<!-- /wp:heading -->" : "Lorem ipsum \(i)"
+            posts.append("(\(id), \(author), '2026-\(String(format: "%02d", month))-\(String(format: "%02d", day)) 09:00:00', '\(content)', '\(title)', "
+                + "'\(statuses[i % statuses.count])', '\(slug)', '2026-\(String(format: "%02d", month))-\(String(format: "%02d", day)) 12:\(String(format: "%02d", i)):00', '\(type)')")
+        }
+        _ = try await session.execute(
+            "REPLACE INTO wp_posts (ID, post_author, post_date, post_content, post_title, post_status, post_name, post_modified, post_type) VALUES "
+                + posts.joined(separator: ", "))
+        var meta: [String] = []
+        for i in 0..<120 {
+            meta.append("(\(i + 1), \(1038 + (i % 50) * 2), '\(["_edit_last", "_wp_page_template", "_thumbnail_id"][i % 3])', 'v\(i)')")
+        }
+        _ = try await session.execute("REPLACE INTO wp_postmeta (meta_id, post_id, meta_key, meta_value) VALUES " + meta.joined(separator: ", "))
+        _ = try await session.execute("ANALYZE TABLE wp_users, wp_posts, wp_postmeta")
     }
 
     /// `CGWindowListCreateImage`, resolved at runtime: it's deprecated and warnings are errors.
@@ -153,12 +247,80 @@ struct SnapshotTests {
         }
         #expect(info.engine == .mysql)
         #expect(workspace.databases.contains("querywell_test"))
+        try await createWordPressFixture(try #require(workspace.live?.session))
+        workspace.refreshSchema()
+        try await waitUntil { workspace.browser.current?.tables.contains { $0.ref.name == "wp_posts" } == true }
+        #expect(workspace.browser.current?.tables.map(\.ref.name).contains("wp_posts") == true)
+
+        workspace.openTable(TableRef(schema: "querywell_test", name: "wp_users"))
+        workspace.openTable(TableRef(schema: "querywell_test", name: "wp_postmeta"))
         workspace.tabs.newQuery()
-        workspace.tabs.openTable(database: "querywell_test", name: "wp_posts")
+        workspace.openTable(TableRef(schema: "querywell_test", name: "wp_posts"))
+        let postsTab = try #require(workspace.tabs.selectedTab)
+        let posts = try #require(workspace.tableModel(forTab: postsTab))
+        posts.pageSizeChanged(500)
+        let size = CGSize(width: 1200, height: 760)
+
+        // Data (light + dark).
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "connection-window")
+        try await waitUntil { posts.content != nil }
+        #expect(posts.content?.rows.count == 50)
+        #expect(posts.pageInfo.label == "Rows 1–50 of 50 (exact)")
+        workspace.browser.select("wp_posts", command: false, shift: false, visible: ["wp_posts"])
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "table-data",
+                         prepare: { window in
+            if let table = Self.findView(GridTableView.self, in: window.contentView!) { table.selectRowIndexes([2], byExtendingSelection: false) }
+        })
+
+        // Inspector open on a row, focused on one field.
+        posts.inspectorFocusColumn = "post_content"
+        posts.inspectorVisible = true
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "table-inspector",
+                         prepare: { window in
+            if let table = Self.findView(GridTableView.self, in: window.contentView!) { table.selectRowIndexes([0], byExtendingSelection: false) }
+        })
+        posts.inspectorVisible = false
+
+        // An active chip filter plus the funnel popover for post_status.
+        posts.upsertFilter(ColumnFilter(column: "post_status", op: .isAnyOf([.text("publish")])))
+        posts.upsertFilter(ColumnFilter(column: "post_type", op: .isAnyOf([.text("page")])))
+        try await waitUntil { posts.content != nil && !posts.isLoading }
+        #expect(posts.filters.filters.count == 2)
+        #expect((posts.content?.rows.count ?? 0) > 0 && (posts.content?.rows.count ?? 0) < 50)
+        posts.showSQL = true
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "table-filtered")
+        posts.showSQL = false
+        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: "table-funnel",
+                         prepare: { _ in posts.requestFilter(column: "post_status") },
+                         extra: { window, suffix in
+            let popoverWindow = NSApp.windows.first { String(describing: type(of: $0)).contains("Popover") && $0.isVisible }
+            #expect(popoverWindow != nil, "the funnel popover should be showing")
+            if let popoverWindow, let image = Self.captureWindow(popoverWindow.windowNumber),
+               let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) {
+                try png.write(to: outputDirectory.appendingPathComponent("table-funnel-popover-\(suffix).png"))
+            }
+            popoverWindow?.orderOut(nil)
+            _ = window
+        })
+        posts.clearFilters()
+        try await waitUntil { posts.content?.rows.count == 50 }
+
+        // Structure, indexes and relations.
+        for (mode, name) in [(TableViewMode.structure, "table-structure"), (.indexes, "table-indexes"), (.relations, "table-relations")] {
+            posts.mode = mode
+            try await render(ConnectionWindowView(workspaceID: workspaceID), model: model, size: size, name: name)
+        }
+        #expect(posts.structure?.foreignKeys.first?.referenced.name == "wp_users")
+        posts.mode = .data
+        // Foreign-key navigation opens the referenced table filtered to the key.
+        posts.followForeignKey(column: "post_author", row: 0)
+        let usersModel = try #require(workspace.tableModel(forTable: TableRef(schema: "querywell_test", name: "wp_users")))
+        try await waitUntil { usersModel.content != nil && usersModel.filters.filters.count == 1 && !usersModel.isLoading }
+        #expect(usersModel.content?.rows.count == 1)
+        workspace.openTable(TableRef(schema: "querywell_test", name: "wp_posts"))
+        workspace.tabs.select(id: postsTab.id)
         workspace.tabs.openConsole()
-        workspace.tabs.select(id: workspace.tabs.tabs[1].id)
-        try await render(ConnectionWindowView(workspaceID: workspaceID), model: model,
-                   size: CGSize(width: 1200, height: 760), name: "connection-window")
+        workspace.tabs.select(id: postsTab.id)
         // The toolbar must fit without AppKit's overflow ("»") button at any supported width.
         for width in [1200.0, 1000, 820] {
             #expect(try await toolbarOverflows(ConnectionWindowView(workspaceID: workspaceID), model: model, width: width) == false,
