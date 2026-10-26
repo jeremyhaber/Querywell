@@ -76,7 +76,17 @@ final class ExportSheetModel {
     var collationChoice: CollationChoice = .keep { didSet { regenerate() } }
     var customCharset = "utf8mb4" { didSet { regenerate() } }
     var customCollation = "utf8mb4_unicode_ci" { didSet { regenerate() } }
-    var selectedTables: Set<String> { didSet { regenerate() } }
+    /// Rules (remembered per connection) and the explicit per-table choices; ``tableModes`` is what they resolve to.
+    private(set) var config = ExportSelectionConfig() { didSet { tableModes = config.resolve(tableNames: allTableNames); regenerate() } }
+    private(set) var tableModes: [String: TableExportMode] = [:]
+    /// Rows selected in the list (⇧/⌘-click), for Space / the context menu.
+    var selection: Set<String> = []
+    /// Substring or glob (`wp_wf*`) narrowing the list; bulk actions apply to what it shows.
+    var filterText = ""
+    var sortBySize = false
+    private(set) var prefix: String?
+    private(set) var groups: [TableGroup] = []
+    @ObservationIgnored var rulesStore: ExportRulesStore?
 
     // MARK: Derived state
 
@@ -106,7 +116,9 @@ final class ExportSheetModel {
         self.secretStore = secretStore
         self.tunnelLocalPort = tunnelLocalPort
         location = profile.ssh != nil ? .remoteOverSSH : .localThroughTunnel
-        selectedTables = Set(tables.map(\.ref.name))
+        let clustered = ExportTableCatalog.cluster(tables.map(\.ref.name))
+        prefix = clustered.prefix
+        groups = clustered.groups
         let owner = profile.id.uuidString
         dbPassword = (try? secretStore.read(SecretKey(ownerID: owner, kind: .databasePassword))) ?? nil
         switch profile.ssh?.auth {
@@ -123,6 +135,7 @@ final class ExportSheetModel {
 
     /// Finds the local tools, the server's collations and WordPress options tables. Safe to call again.
     func load(inspector: (any SchemaInspector)?) async {
+        if let rulesStore, let stored = try? await rulesStore.config(for: profile.id) { config = stored }
         tools = await toolLocator()
         toolsLoaded = true
         regenerate()
@@ -151,17 +164,35 @@ final class ExportSheetModel {
     var supportsCollation: Bool { engine != .postgresql }
     var supportsRoutinesEventsTriggers: Bool { engine != .postgresql }
     var canExportOnServer: Bool { profile.ssh != nil }
-    var allSelected: Bool { selectedTables.count == allTables.count }
-    var selectedCount: Int { selectedTables.count }
+    var allTableNames: [String] { allTables.map(\.ref.name) }
+    func mode(of table: String) -> TableExportMode { tableModes[table] ?? .both }
 
-    var selectedTableInfos: [TableInfo] { allTables.filter { selectedTables.contains($0.ref.name) } }
+    /// Tables that are part of the dump (anything but skipped).
+    var selectedTables: Set<String> {
+        get { Set(allTableNames.filter { mode(of: $0) != .skip }) }
+        set { setMode(.skip, for: allTableNames.filter { !newValue.contains($0) }); setMode(.both, for: allTableNames.filter { newValue.contains($0) && mode(of: $0) == .skip }) }
+    }
+    var allSelected: Bool { selectedCount == allTables.count }
+    var selectedCount: Int { allTables.count - tableModes.values.filter { $0 == .skip }.count }
+    var structureOnlyCount: Int { tableModes.values.filter { $0 == .structureOnly }.count }
 
-    /// Data + index bytes of the selected tables (the server's estimate).
+    var selectedTableInfos: [TableInfo] { allTables.filter { mode(of: $0.ref.name) != .skip } }
+
+    /// Data + index bytes of the tables whose rows are exported (the server's estimate).
     var estimatedBytes: Int64 {
-        selectedTableInfos.reduce(0) { $0 + ($1.dataBytes ?? 0) + ($1.indexBytes ?? 0) }
+        allTables.filter { [.both, .dataOnly].contains(mode(of: $0.ref.name)) }.reduce(0) { $0 + ($1.dataBytes ?? 0) + ($1.indexBytes ?? 0) }
+    }
+
+    /// "Exporting 42 of 48 tables · structure only for 6 · ≈ 37 MB"
+    var selectionSummary: String {
+        var parts = ["Exporting \(selectedCount) of \(allTables.count) tables"]
+        if structureOnlyCount > 0 { parts.append("structure only for \(structureOnlyCount)") }
+        if estimatedBytes > 0 { parts.append("≈ " + Self.byteString(estimatedBytes)) }
+        return parts.joined(separator: " · ")
     }
 
     var subtitle: String {
+        let estimatedBytes = allTables.reduce(Int64(0)) { $0 + ($1.dataBytes ?? 0) + ($1.indexBytes ?? 0) }
         let tablesText = "\(allTables.count) table\(allTables.count == 1 ? "" : "s")"
         var parts = [profile.name, serverInfo.shortDescription, tablesText]
         if estimatedBytes > 0 { parts.append("about " + Self.byteString(estimatedBytes)) }
@@ -183,10 +214,17 @@ final class ExportSheetModel {
     var exportOptions: ExportOptions {
         ExportOptions(
             scope: scope, singleTransaction: singleTransaction, addDropTable: addDropTable, gzip: gzip,
-            tables: allSelected ? nil : allTables.map(\.ref.name).filter(selectedTables.contains),
+            tables: explicitTableList,
             skipWordPressTransients: skipTransients && supportsTransients, optionsTables: optionsTables,
             includeRoutines: includeRoutines, includeTriggers: includeTriggers, includeEvents: includeEvents,
-            collation: collationMapping, location: location)
+            collation: collationMapping, location: location, tableModes: tableModes)
+    }
+
+    /// With few skipped tables the dump uses `--ignore-table`; with many, an explicit list reads better.
+    private var explicitTableList: [String]? {
+        let skipped = tableModes.values.filter { $0 == .skip }.count
+        guard skipped > 0, skipped > allTables.count - skipped else { return nil }
+        return allTableNames.filter { mode(of: $0) != .skip }
     }
 
     var collationMapping: CollationMapping? {
@@ -232,13 +270,13 @@ final class ExportSheetModel {
     }
 
     var isRunning: Bool { runState == .running }
-    var canStart: Bool { plan != nil && !isRunning && !selectedTables.isEmpty }
+    var canStart: Bool { plan != nil && !isRunning && selectedCount > 0 }
 
     var progressFraction: Double {
         switch runState {
         case .finished: return 1
         default:
-            let total = progress.tableTotal ?? (allSelected ? allTables.count : selectedCount)
+            let total = progress.tableTotal ?? selectedCount
             guard total > 0 else { return 0 }
             return min(1, Double(progress.tableIndex) / Double(total))
         }
@@ -248,7 +286,7 @@ final class ExportSheetModel {
 
     func regenerate() {
         toolSelection = toolsLoaded || !tools.isEmpty ? DumpToolSelector.select(for: serverInfo, from: tools) : nil
-        guard !selectedTables.isEmpty else {
+        guard selectedCount > 0 else {
             plan = nil
             planError = "Choose at least one table to export."
             return
@@ -279,11 +317,127 @@ final class ExportSheetModel {
         (destination.path as NSString).abbreviatingWithTildeInPath
     }
 
-    func selectAllTables() { selectedTables = Set(allTables.map(\.ref.name)) }
-    func selectNoTables() { selectedTables = [] }
+    // MARK: Table modes
 
-    func toggle(table name: String) {
-        if selectedTables.contains(name) { selectedTables.remove(name) } else { selectedTables.insert(name) }
+    /// Sets a mode as an explicit choice (it beats the rules, and is remembered for the next export).
+    func setMode(_ mode: TableExportMode, for tables: [String]) {
+        var c = config
+        for t in tables {
+            let byRules = ExportSelectionConfig(rules: c.rules).resolve(tableNames: [t])[t] ?? .both
+            if mode == byRules { c.overrides[t] = nil } else { c.overrides[t] = mode }
+        }
+        if c != config { config = c }
+    }
+
+    /// Row click: Both → Structure only → Skip → Both.
+    func cycleMode(of tables: [String]) {
+        for t in tables {
+            let next: TableExportMode = switch mode(of: t) {
+            case .both: .structureOnly
+            case .structureOnly: .skip
+            case .skip, .dataOnly: .both
+            }
+            setMode(next, for: [t])
+        }
+    }
+
+    /// Structure / Data toggles of a row, group or column header.
+    func setStructure(_ on: Bool, for tables: [String]) {
+        for t in tables { setMode(Self.mode(structure: on, data: includesData(t)), for: [t]) }
+    }
+
+    func setData(_ on: Bool, for tables: [String]) {
+        for t in tables { setMode(Self.mode(structure: includesStructure(t), data: on), for: [t]) }
+    }
+
+    func includesStructure(_ t: String) -> Bool { [.both, .structureOnly].contains(mode(of: t)) }
+    func includesData(_ t: String) -> Bool { [.both, .dataOnly].contains(mode(of: t)) }
+
+    static func mode(structure: Bool, data: Bool) -> TableExportMode {
+        switch (structure, data) {
+        case (true, true): .both
+        case (true, false): .structureOnly
+        case (false, true): .dataOnly
+        case (false, false): .skip
+        }
+    }
+
+    func apply(preset: ExportTablePreset) {
+        let modes = preset.modes(for: groups)
+        var c = config
+        c.overrides = [:]
+        for t in allTableNames { c.overrides[t] = modes[t] ?? .both }
+        config = c
+    }
+
+    func selectAllTables() { apply(preset: .allTables) }
+    func selectNoTables() { setMode(.skip, for: allTableNames) }
+
+    // MARK: Suggestions
+
+    func suggestion(for table: String) -> TableSuggestion? {
+        let isCore = groups.first { $0.kind == .core }?.tables.contains(table) ?? false
+        return ExportTableCatalog.suggestion(for: table, prefix: prefix, isCore: isCore)
+    }
+
+    /// Suggested tables that aren't already at the suggested mode.
+    var pendingSuggestions: [String] {
+        allTableNames.filter { t in suggestion(for: t).map { mode(of: t) != $0.mode } ?? false }
+    }
+
+    func applySuggestions() {
+        for t in pendingSuggestions { if let s = suggestion(for: t) { setMode(s.mode, for: [t]) } }
+    }
+
+    // MARK: Filter
+
+    var isFiltering: Bool { !filterText.trimmingCharacters(in: .whitespaces).isEmpty }
+
+    func matchesFilter(_ table: String) -> Bool {
+        !isFiltering || GlobPattern.matches(filterText.trimmingCharacters(in: .whitespaces), table, substringIfPlain: true)
+    }
+
+    var visibleTables: [String] { allTableNames.filter(matchesFilter) }
+
+    /// "Skip matching" / "Structure only" / "Include matching".
+    func setModeForVisible(_ mode: TableExportMode) { setMode(mode, for: visibleTables) }
+
+    /// "Remember as rule": the filter text becomes a rule with `mode`, applied to the matches now and to future tables.
+    func rememberFilterAsRule(_ mode: TableExportMode) {
+        let trimmed = filterText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        let pattern = trimmed.contains("*") || trimmed.contains("?") ? trimmed : "*\(trimmed)*"
+        var c = config
+        c.rules.removeAll { $0.pattern.lowercased() == pattern.lowercased() }
+        c.rules.append(ExportRule(pattern: pattern, mode: mode))
+        // Explicit choices for the matched tables would hide the new rule.
+        for t in allTableNames where GlobPattern.matches(pattern, t) { c.overrides[t] = nil }
+        config = c
+        persistRules()
+    }
+
+    func removeRule(_ id: UUID) {
+        var c = config
+        c.rules.removeAll { $0.id == id }
+        config = c
+        persistRules()
+    }
+
+    var rules: [ExportRule] { config.rules }
+
+    private func persistRules() {
+        guard let rulesStore else { return }
+        let snapshot = config
+        let id = profile.id
+        Task { try? await rulesStore.save(snapshot, for: id) }
+    }
+
+    /// Tables in a group, in the chosen sort order and narrowed by the filter.
+    func tables(in group: TableGroup) -> [TableInfo] {
+        let infos = group.tables.compactMap { name in allTables.first { $0.ref.name == name } }.filter { matchesFilter($0.ref.name) }
+        guard sortBySize else { return infos }
+        func size(_ t: TableInfo) -> Int64 { (t.dataBytes ?? 0) + (t.indexBytes ?? 0) }
+        return infos.sorted { size($0) > size($1) }
     }
 
     // MARK: Run
@@ -291,8 +445,13 @@ final class ExportSheetModel {
     /// Runs the export to ``destination``. Returns when it finished, failed or was cancelled.
     func run() async {
         guard let plan, canStart else { return }
+        if let rulesStore {
+            let snapshot = config
+            let id = profile.id
+            try? await rulesStore.save(snapshot, for: id)
+        }
         runState = .running
-        progress = Progress(tableTotal: plan.tables?.count)
+        progress = Progress(tableTotal: plan.tables?.count ?? selectedCount)
         logLines = []
         startedAt = Date()
         finishedAt = nil

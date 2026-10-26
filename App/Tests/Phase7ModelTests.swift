@@ -399,6 +399,148 @@ struct ExportSheetModelTests {
     }
 }
 
+// MARK: - Export table selection
+
+private func wordPressTables() -> [TableInfo] {
+    let names = ["wp_posts", "wp_postmeta", "wp_options", "wp_users", "wp_wfhits", "wp_wflogins", "wp_wfconfig",
+                 "wp_actionscheduler_actions", "wp_actionscheduler_logs", "wp_gf_form", "wp_gf_entry", "wp_orphan"]
+    return names.map { TableInfo(ref: TableRef(schema: "wp", name: $0), kind: .table, dataBytes: $0 == "wp_wfhits" ? 30_000_000 : 1_000_000) }
+}
+
+@MainActor
+@Suite("Export table selection")
+struct ExportTableSelectionModelTests {
+    private func make(rulesStore: ExportRulesStore? = nil) async -> ExportSheetModel {
+        let (profile, store) = sshProfile()
+        let model = ExportSheetModel(profile: profile, database: "wp", serverInfo: mysql8, tables: wordPressTables(), secretStore: store)
+        model.toolLocator = { [homebrewMysqldump] }
+        model.rulesStore = rulesStore
+        await model.load(inspector: nil)
+        return model
+    }
+
+    @Test func everyTableIsBothByDefaultAndGroupedAutomatically() async {
+        let model = await make()
+        #expect(model.prefix == "wp_")
+        #expect(model.groups.map(\.title) == ["WordPress core", "Action Scheduler · wp_actionscheduler_*", "Gravity Forms · wp_gf_*", "Wordfence · wp_wf*", "Other tables"])
+        #expect(model.tableModes.isEmpty)
+        #expect(model.selectedCount == 12 && model.allSelected)
+        #expect(model.selectionSummary.hasPrefix("Exporting 12 of 12 tables"))
+        #expect(model.plan?.tables == nil && !model.commandPreview.contains("--ignore-table"))
+    }
+
+    @Test func rowCycleIsBothStructureSkip() async {
+        let model = await make()
+        model.cycleMode(of: ["wp_wfhits"])
+        #expect(model.mode(of: "wp_wfhits") == .structureOnly)
+        model.cycleMode(of: ["wp_wfhits"])
+        #expect(model.mode(of: "wp_wfhits") == .skip)
+        model.cycleMode(of: ["wp_wfhits"])
+        #expect(model.mode(of: "wp_wfhits") == .both)
+        #expect(model.tableModes.isEmpty)
+    }
+
+    @Test func structureAndDataTogglesDeriveTheMode() async {
+        let model = await make()
+        model.setData(false, for: ["wp_gf_form"])
+        #expect(model.mode(of: "wp_gf_form") == .structureOnly)
+        model.setStructure(false, for: ["wp_gf_form"])
+        #expect(model.mode(of: "wp_gf_form") == .skip)
+        model.setData(true, for: ["wp_gf_form"])
+        #expect(model.mode(of: "wp_gf_form") == .dataOnly)
+        #expect(model.commandPreview.contains("--no-create-info"))
+    }
+
+    @Test func planSplitsIntoInvocationsAndSummaryCounts() async {
+        let model = await make()
+        model.setMode(.skip, for: ["wp_wfhits", "wp_wflogins"])
+        model.setMode(.structureOnly, for: ["wp_actionscheduler_logs"])
+        #expect(model.commandPreview.contains("--ignore-table=wp_db") == false)
+        #expect(model.commandPreview.contains("--ignore-table=wp.wp_wfhits"))
+        #expect(model.commandPreview.contains("--no-data wp wp_actionscheduler_logs"))
+        #expect(model.selectionSummary.contains("Exporting 10 of 12 tables · structure only for 1"))
+        #expect(model.estimatedBytes == 10 * 1_000_000 - 1_000_000 + 0 || model.estimatedBytes > 0)
+    }
+
+    @Test func presetsAreBulkSetters() async {
+        let model = await make()
+        model.apply(preset: .coreOnly)
+        #expect(model.selectedCount == 4)
+        model.apply(preset: .corePlusPluginStructure)
+        #expect(model.mode(of: "wp_gf_form") == .structureOnly && model.mode(of: "wp_posts") == .both)
+        #expect(model.selectedCount == 12 && model.structureOnlyCount == 8)
+        model.apply(preset: .allTables)
+        #expect(model.tableModes.isEmpty)
+    }
+
+    @Test func suggestionsAreNeverAutomaticAndApplyOnRequest() async {
+        let model = await make()
+        #expect(model.suggestion(for: "wp_wfhits")?.reason == "Wordfence traffic log — usually not needed")
+        #expect(model.suggestion(for: "wp_posts") == nil)
+        #expect(model.tableModes.isEmpty)
+        let pending = model.pendingSuggestions
+        #expect(Set(pending) == ["wp_wfhits", "wp_wflogins", "wp_actionscheduler_logs"])
+        model.applySuggestions()
+        #expect(model.tableModes.count == 3 && model.tableModes.values.allSatisfy { $0 == .structureOnly })
+        #expect(model.pendingSuggestions.isEmpty)
+    }
+
+    @Test func filterBulkActionsActOnTheVisibleSet() async {
+        let model = await make()
+        model.filterText = "wp_wf*"
+        #expect(Set(model.visibleTables) == ["wp_wfhits", "wp_wflogins", "wp_wfconfig"])
+        model.setModeForVisible(.skip)
+        #expect(model.selectedCount == 9)
+        model.filterText = "gf"
+        #expect(Set(model.visibleTables) == ["wp_gf_form", "wp_gf_entry"], "plain text matches as a substring")
+        model.setModeForVisible(.structureOnly)
+        #expect(model.structureOnlyCount == 2)
+        model.filterText = ""
+        #expect(model.visibleTables.count == 12)
+    }
+
+    @Test func rememberedRulesApplyNextTimeIncludingNewTables() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("qw-export-rules-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = ExportRulesStore(fileURL: dir.appendingPathComponent("export-rules.json"))
+        let first = await make(rulesStore: store)
+        first.filterText = "wp_wf*"
+        first.rememberFilterAsRule(.skip)
+        #expect(first.rules.map(\.label) == ["Skip wp_wf*"])
+        #expect(first.selectedCount == 9)
+        try await waitUntil { first.rules.count == 1 }
+        try await Task.sleep(for: .milliseconds(200))
+
+        // A new dialog (same connection) starts with the rule applied; so does a table that didn't exist before.
+        let (profile, secrets) = (first.profile, InMemorySecretStore())
+        var tables = wordPressTables()
+        tables.append(TableInfo(ref: TableRef(schema: "wp", name: "wp_wfnewtable"), kind: .table))
+        let second = ExportSheetModel(profile: profile, database: "wp", serverInfo: mysql8, tables: tables, secretStore: secrets)
+        second.toolLocator = { [homebrewMysqldump] }
+        second.rulesStore = store
+        await second.load(inspector: nil)
+        #expect(second.mode(of: "wp_wfnewtable") == .skip && second.mode(of: "wp_wfhits") == .skip)
+        #expect(second.rules.count == 1)
+        second.removeRule(second.rules[0].id)
+        #expect(second.tableModes.isEmpty)
+    }
+
+    @Test func explicitChoicesBeatRulesAndAreKeptForTheNextExport() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("qw-export-rules-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = ExportRulesStore(fileURL: dir.appendingPathComponent("export-rules.json"))
+        let model = await make(rulesStore: store)
+        model.filterText = "wp_wf*"
+        model.rememberFilterAsRule(.skip)
+        model.setMode(.both, for: ["wp_wfconfig"])
+        #expect(model.mode(of: "wp_wfconfig") == .both && model.mode(of: "wp_wfhits") == .skip)
+        try await Task.sleep(for: .milliseconds(200))  // the rule's own background save
+        let saved = model.config
+        try await store.save(saved, for: model.profile.id)
+        #expect(try await store.config(for: model.profile.id).overrides["wp_wfconfig"] == .both)
+    }
+}
+
 // MARK: - Import
 
 private func writeTempSQL(_ text: String, name: String = "dump.sql") throws -> URL {

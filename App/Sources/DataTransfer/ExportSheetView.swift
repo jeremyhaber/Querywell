@@ -10,7 +10,16 @@ struct ExportSheetView: View {
     /// Asks for the destination (NSSavePanel); tests replace it.
     var chooseDestination: @MainActor (ExportSheetModel) async -> URL? = ExportSheetView.runSavePanel
 
-    @State private var showTables = false
+    init(model: ExportSheetModel, expandTables: Bool? = nil, onClose: @escaping () -> Void,
+         chooseDestination: @escaping @MainActor (ExportSheetModel) async -> URL? = ExportSheetView.runSavePanel) {
+        self.model = model
+        self.onClose = onClose
+        self.chooseDestination = chooseDestination
+        // More than one group means there is something to choose from: show the list.
+        _showTables = State(initialValue: expandTables ?? (model.groups.count > 1))
+    }
+
+    @State private var showTables: Bool
     @State private var showCommand = true
 
     var body: some View {
@@ -40,7 +49,7 @@ struct ExportSheetView: View {
             footer
         }
         .frame(width: 760)
-        .frame(minHeight: 560, idealHeight: 680, maxHeight: 760)
+        .frame(minHeight: 560, idealHeight: showTables ? 780 : 680, maxHeight: .infinity)
         .background(Theme.background)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Export \(model.database)")
@@ -178,6 +187,9 @@ struct ExportSheetView: View {
             Text(model.tablesSummary).font(.system(size: 13))
             Button(showTables ? "Done" : "Choose…") { withAnimation(.easeOut(duration: 0.15)) { showTables.toggle() } }
                 .buttonStyle(.link).font(.system(size: 13))
+            if !showTables, model.structureOnlyCount > 0 {
+                Text("· structure only for \(model.structureOnlyCount)").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            }
             Spacer(minLength: 8)
             SectionLabel("Save to")
             Text(model.destinationDisplay)
@@ -188,43 +200,7 @@ struct ExportSheetView: View {
         }
     }
 
-    private var tableList: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Text("\(model.selectedCount) of \(model.allTables.count) selected").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                Spacer()
-                Button("Select All") { model.selectAllTables() }.buttonStyle(.link)
-                Button("Select None") { model.selectNoTables() }.buttonStyle(.link)
-            }
-            .font(.system(size: 12))
-            .padding(.horizontal, 12).padding(.vertical, 6)
-            Divider()
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(model.allTables) { table in
-                        HStack(spacing: 8) {
-                            Toggle(isOn: Binding(get: { model.selectedTables.contains(table.ref.name) }, set: { _ in model.toggle(table: table.ref.name) })) {
-                                Text(table.ref.name).font(.system(size: 13, design: .monospaced))
-                            }
-                            .toggleStyle(.checkbox)
-                            if table.kind != .table { Text("view").font(.system(size: 11)).foregroundStyle(Theme.textTertiary) }
-                            Spacer()
-                            Text(sizeText(table)).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).monospacedDigit()
-                        }
-                        .padding(.horizontal, 12).padding(.vertical, 3)
-                    }
-                }
-            }
-            .frame(maxHeight: 190)
-        }
-        .background(Theme.sidebar, in: RoundedRectangle(cornerRadius: Theme.cardRadius))
-        .overlay(RoundedRectangle(cornerRadius: Theme.cardRadius).strokeBorder(Theme.separator))
-    }
-
-    private func sizeText(_ table: TableInfo) -> String {
-        let bytes = (table.dataBytes ?? 0) + (table.indexBytes ?? 0)
-        return bytes > 0 ? ExportSheetModel.byteString(bytes) : "—"
-    }
+    private var tableList: some View { ExportTableSelectionView(model: model) }
 
     // MARK: Command preview
 

@@ -154,6 +154,13 @@ struct Phase7SnapshotTests {
         _ = try await session.execute("INSERT INTO qw7_posts (ID, post_title, post_status) VALUES " + posts.joined(separator: ","))
     }
 
+    /// Empty plugin tables so the export list has something to group (Wordfence, Action Scheduler).
+    private func createPluginTables(_ session: any DatabaseSession) async throws {
+        for name in ["wp_wfhits", "wp_wflogins", "wp_wfconfig", "wp_wfblocks7", "wp_actionscheduler_actions", "wp_actionscheduler_logs"] {
+            _ = try await session.execute("CREATE TABLE IF NOT EXISTS \(name) (id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY, payload TEXT) DEFAULT CHARSET=utf8mb4")
+        }
+    }
+
     // MARK: Console
 
     @Test func consoleScreens() async throws {
@@ -196,6 +203,7 @@ struct Phase7SnapshotTests {
         let (rootID, root) = try await open(model, "Docker MySQL root")
         let rootSession = try #require(root.live?.session)
         try await createFixture(rootSession)
+        try await createPluginTables(rootSession)
         viaSSH.refreshSchema()
         try await waitUntil { viaSSH.browser.current?.tables.contains { $0.ref.name == "qw7_options" } == true }
 
@@ -206,16 +214,25 @@ struct Phase7SnapshotTests {
         #expect(sheet.isWordPress, "qw7_options looks like a WordPress options table")
         #expect(sheet.commandPreview.contains("ssh"))
         #expect(!sheet.commandPreview.contains("querywell_pw"))
+        // Table selection: a remembered rule skips Wordfence, Action Scheduler's actions keep only their structure.
+        sheet.filterText = "wp_wf*"
+        sheet.rememberFilterAsRule(.skip)
+        sheet.filterText = ""
+        sheet.setMode(.structureOnly, for: ["wp_actionscheduler_actions"])
+        #expect(sheet.groups.contains { $0.pattern == "wp_wf*" } && sheet.groups.contains { $0.pattern == "wp_actionscheduler_*" })
+        #expect(sheet.commandPreview.contains("--no-data") && sheet.commandPreview.contains("--ignore-table=querywell_test.wp_wfhits"))
+        try await renderSheet(ExportSheetView(model: sheet, expandTables: true, onClose: {}), model: model, width: 760, height: 1180, name: "export-tables")
+        sheet.apply(preset: .allTables)
         sheet.selectedTables = ["qw7_options", "qw7_posts"]
         sheet.skipTransients = true
         sheet.collationChoice = .mysql57
 
-        try await renderSheet(ExportSheetView(model: sheet, onClose: {}), model: model, width: 760, height: 720, name: "export-dialog")
+        try await renderSheet(ExportSheetView(model: sheet, expandTables: false, onClose: {}), model: model, width: 760, height: 720, name: "export-dialog")
         sheet.location = .localThroughTunnel
-        try await renderSheet(ExportSheetView(model: sheet, onClose: {}), model: model, width: 760, height: 720, name: "export-dialog-local")
+        try await renderSheet(ExportSheetView(model: sheet, expandTables: false, onClose: {}), model: model, width: 760, height: 720, name: "export-dialog-local")
         sheet.location = .remoteOverSSH
         sheet.previewRunning(.init(currentTable: "qw7_posts", tableIndex: 1, tableTotal: 2, bytes: 41_000_000))
-        try await renderSheet(ExportSheetView(model: sheet, onClose: {}), model: model, width: 760, height: 720, name: "export-progress")
+        try await renderSheet(ExportSheetView(model: sheet, expandTables: false, onClose: {}), model: model, width: 760, height: 720, name: "export-progress")
         sheet.endPreview()
 
         // Real run: export over SSH (the dump runs on the bastion), then import into a fresh schema.
@@ -226,7 +243,7 @@ struct Phase7SnapshotTests {
         await sheet.run()
         guard case .finished(let summary) = sheet.runState else { Issue.record("export: \(sheet.runState)"); return }
         #expect(summary.tables.contains("qw7_options") && summary.bytesWritten > 0)
-        try await renderSheet(ExportSheetView(model: sheet, onClose: {}), model: model, width: 760, height: 720, name: "export-done")
+        try await renderSheet(ExportSheetView(model: sheet, expandTables: false, onClose: {}), model: model, width: 760, height: 720, name: "export-done")
 
         _ = try await rootSession.execute("DROP DATABASE IF EXISTS qw7_import_target")
         _ = try await rootSession.execute("CREATE DATABASE qw7_import_target")

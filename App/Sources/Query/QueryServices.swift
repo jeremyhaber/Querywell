@@ -8,6 +8,8 @@ final class QueryServices {
     let historyDirectory: URL
     let savedQueries: SavedQueryStore
     let snippets: SnippetStore
+    /// Remembered export table rules (per connection).
+    let exportRules: ExportRulesStore
     private(set) var retention: HistoryRetention
     private var histories: [UUID: QueryHistoryStore] = [:]
 
@@ -15,6 +17,7 @@ final class QueryServices {
         historyDirectory = directory.appendingPathComponent("history", isDirectory: true)
         savedQueries = SavedQueryStore(fileURL: directory.appendingPathComponent("saved-queries.json"))
         snippets = SnippetStore(fileURL: directory.appendingPathComponent("snippets.json"))
+        exportRules = ExportRulesStore(fileURL: directory.appendingPathComponent("export-rules.json"))
         self.retention = retention
     }
 
@@ -45,6 +48,7 @@ final class QueryServices {
         try? QueryHistoryStore.purge(connectionID: connectionID, directory: historyDirectory)
         try? await savedQueries.purge(connectionID: connectionID)
         try? await snippets.purge(connectionID: connectionID)
+        try? await exportRules.purge(connectionID: connectionID)
     }
 
     func clearHistory(connectionID: UUID) async {
