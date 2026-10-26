@@ -81,6 +81,7 @@ struct ConnectionWindowContent: View {
                 })
             .focusedSceneValue(\.windowActions, windowActions)
             .task { await workspace.startIfNeeded() }
+            .task { await workspace.queryLibrary.refreshAllSaved() }
             .onAppear { workspace.safety = model.settings.safety }
             .onChange(of: model.settings.safety) { _, new in workspace.safety = new }
             .confirmationDialog(
@@ -114,7 +115,10 @@ struct ConnectionWindowContent: View {
             selectTab: { workspace.selectTab(at: $0) },
             nextTab: { workspace.tabs.selectNext() },
             previousTab: { workspace.tabs.selectPrevious() },
-            quickOpen: { showSwitcher.toggle() })
+            quickOpen: {
+                showSwitcher.toggle()
+                if showSwitcher { Task { await workspace.queryLibrary.refreshAllSaved() } }
+            })
     }
 
     // MARK: Body by state
@@ -126,8 +130,14 @@ struct ConnectionWindowContent: View {
             VStack(spacing: 0) {
                 TabStripView(workspace: workspace)
                 HSplitView {
-                    WorkspaceSidebar(workspace: workspace)
-                        .frame(minWidth: 200, idealWidth: 240, maxWidth: 340)
+                    Group {
+                        if case .query = workspace.tabs.selectedTab?.kind {
+                            QuerySidebarView(workspace: workspace, library: workspace.queryLibrary)
+                        } else {
+                            WorkspaceSidebar(workspace: workspace)
+                        }
+                    }
+                    .frame(minWidth: 200, idealWidth: 240, maxWidth: 340)
                     TabContentView(workspace: workspace)
                         .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -234,6 +244,7 @@ struct ConnectionWindowContent: View {
     private var quickOpenButton: some View {
         Button {
             showSwitcher = true
+            Task { await workspace.queryLibrary.refreshAllSaved() }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
@@ -445,7 +456,8 @@ struct ConnectionWindowContent: View {
         let connections = model.library.profiles
             .sorted { ($0.lastUsedAt ?? .distantPast) > ($1.lastUsedAt ?? .distantPast) }
             .map { QuickSwitcherItem.connection($0.id, name: $0.name, tag: $0.colorTag) }
-        return tabs + workspace.browser.switcherItems + connections + QuickAction.allCases.map(QuickSwitcherItem.action)
+        let saved = workspace.queryLibrary.allSaved.map { QuickSwitcherItem.savedQuery($0.id, name: $0.name) }
+        return tabs + workspace.browser.switcherItems + saved + connections + QuickAction.allCases.map(QuickSwitcherItem.action)
     }
 
     private func perform(_ item: QuickSwitcherItem) {
@@ -453,6 +465,8 @@ struct ConnectionWindowContent: View {
         case .connection(let id, _, _): model.openConnection(id, using: openWindow)
         case .openTab(let id, _): workspace.tabs.select(id: id)
         case .table(let database, let name): workspace.openTable(TableRef(schema: database, name: name))
+        case .savedQuery(let id, _):
+            if let query = workspace.queryLibrary.allSaved.first(where: { $0.id == id }) { workspace.openSaved(query) }
         case .action(.newQuery): workspace.newQuery()
         case .action(.newConsole): workspace.openConsole()
         case .action(.openConnections): openWindow(id: "launcher")

@@ -434,7 +434,7 @@ struct LauncherView: View {
         case .connection(let id, _, _): model.openConnection(id, using: openWindow)
         case .action(.settings): openSettings()
         case .action(.openConnections): NSApp.activate()
-        case .action, .openTab, .table: break
+        case .action, .openTab, .table, .savedQuery: break
         }
     }
 }

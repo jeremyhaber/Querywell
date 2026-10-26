@@ -22,6 +22,8 @@ final class AppModel {
     @ObservationIgnored let opener: ConnectionOpener
     @ObservationIgnored let tester: ConnectionTester
     @ObservationIgnored let savedFiltersStore: SavedFiltersStore
+    /// Query history, saved queries and snippets.
+    @ObservationIgnored let queryServices: QueryServices
     @ObservationIgnored private var settingsSaveTask: Task<Void, Never>?
 
     private(set) var library = ConnectionLibrary()
@@ -38,9 +40,11 @@ final class AppModel {
         secretStore: any SecretStore,
         settingsStore: AppSettingsStore,
         opener: ConnectionOpener? = nil,
-        savedFiltersStore: SavedFiltersStore? = nil
+        savedFiltersStore: SavedFiltersStore? = nil,
+        queryServices: QueryServices? = nil
     ) {
         self.repository = repository
+        self.queryServices = queryServices ?? QueryServices()
         self.secretStore = secretStore
         self.settingsStore = settingsStore
         self.savedFiltersStore = savedFiltersStore ?? SavedFiltersStore(
@@ -61,7 +65,8 @@ final class AppModel {
                 fileURL: directory.appendingPathComponent(AppDirectories.settingsFileName)),
             opener: opener,
             savedFiltersStore: SavedFiltersStore(
-                fileURL: directory.appendingPathComponent(AppDirectories.savedFiltersFileName)))
+                fileURL: directory.appendingPathComponent(AppDirectories.savedFiltersFileName)),
+            queryServices: QueryServices(directory: directory))
     }
 
     /// The real app: Application Support + Keychain.
@@ -88,6 +93,7 @@ final class AppModel {
         }
         do {
             settings = try await settingsStore.load()
+            queryServices.updateRetention(settings.historyRetention)
         } catch {
             present(error, title: "Couldn't load your settings")
         }
@@ -236,7 +242,11 @@ final class AppModel {
             try await refreshLibrary()
         } catch {
             present(error, title: "Couldn't delete the connection")
+            return
         }
+        // History, saved queries, snippets and the sample-rows choice belong to the connection.
+        await queryServices.purge(connectionID: profile.id)
+        updateSettings { $0.ai.forgetConnection(profile.id) }
     }
 
     @discardableResult
@@ -322,7 +332,7 @@ final class AppModel {
             existing.bringToFront()
             return nil
         }
-        let workspace = ConnectionWorkspace(profile: profile, opener: opener)
+        let workspace = ConnectionWorkspace(profile: profile, opener: opener, queryServices: queryServices)
         workspace.savedFiltersStore = savedFiltersStore
         workspaces[workspace.id] = workspace
         do {
@@ -367,6 +377,7 @@ final class AppModel {
         change(&copy)
         guard copy != settings else { return }
         settings = copy
+        queryServices.updateRetention(copy.historyRetention)
         let snapshot = copy
         let previous = settingsSaveTask
         settingsSaveTask = Task { [settingsStore] in

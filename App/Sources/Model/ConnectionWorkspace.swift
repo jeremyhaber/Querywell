@@ -44,12 +44,21 @@ final class ConnectionWorkspace: Identifiable {
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private(set) var isClosed = false
     @ObservationIgnored private var tableModels: [WorkspaceTab.ID: TableDataModel] = [:]
+    @ObservationIgnored private var queryModels: [WorkspaceTab.ID: QueryTabModel] = [:]
     @ObservationIgnored var savedFiltersStore: SavedFiltersStore?
+    /// History, saved queries and snippets (shared by every window).
+    @ObservationIgnored let queryServices: QueryServices
+    /// The History / Saved / Snippets sidebar of query tabs.
+    let queryLibrary: QueryLibraryModel
 
-    init(profile: ConnectionProfile, opener: ConnectionOpener, keepaliveInterval: Duration = .seconds(60)) {
+    init(profile: ConnectionProfile, opener: ConnectionOpener, keepaliveInterval: Duration = .seconds(60),
+         queryServices: QueryServices? = nil) {
         self.profile = profile
         self.opener = opener
         self.keepaliveInterval = keepaliveInterval
+        let services = queryServices ?? QueryServices()
+        self.queryServices = services
+        self.queryLibrary = QueryLibraryModel(connectionID: profile.id, services: services)
         gate.contextProvider = { [weak self] database in
             guard let self else { return nil }
             return GuardContext(profile: self.profile, currentDatabase: database ?? self.browser.selectedSchema ?? self.selectedDatabase)
@@ -57,6 +66,8 @@ final class ConnectionWorkspace: Identifiable {
         gate.settingsProvider = { [weak self] in self?.safety ?? AppSettings.Safety() }
         gate.sessionProvider = { [weak self] in self?.live?.session }
         gate.windowProvider = { [weak self] in self?.window }
+        queryLibrary.onSavedChanged = { [weak self] q in self?.savedQueryChanged(q) }
+        queryLibrary.onSavedDeleted = { [weak self] id in self?.savedQueryDeleted(id) }
     }
 
     // MARK: Derived
@@ -86,6 +97,7 @@ final class ConnectionWorkspace: Identifiable {
     /// Replaces the profile used for the next (re)connect. A live connection is not touched.
     func updateProfile(_ new: ConnectionProfile) {
         profile = new
+        for model in queryModels.values { model.profile = new }
     }
 
     /// Connects the first time the window appears; later appearances don't undo a Disconnect.
@@ -243,10 +255,13 @@ final class ConnectionWorkspace: Identifiable {
 
     /// Table models with pending edits, in tab order.
     var modelsWithUnsavedEdits: [(tab: WorkspaceTab, model: TableDataModel)] {
-        tabs.tabs.compactMap { tab in
-            guard let model = tableModels[tab.id], model.hasPendingChanges else { return nil }
-            return (tab, model)
-        }
+        tabs.tabs.flatMap { tab in pendingModels(for: tab.id).map { (tab, $0) } }
+    }
+
+    /// Edit models of a tab that hold unsaved edits: a table tab's own, or a query tab's editable results.
+    func pendingModels(for id: WorkspaceTab.ID) -> [TableDataModel] {
+        if let model = tableModels[id] { return model.hasPendingChanges ? [model] : [] }
+        return queryModels[id]?.pendingEditModels ?? []
     }
 
     var hasUnsavedEdits: Bool { !modelsWithUnsavedEdits.isEmpty }
@@ -264,9 +279,11 @@ final class ConnectionWorkspace: Identifiable {
     /// Closes a tab, first asking what to do with its unsaved edits.
     func requestClose(tab id: WorkspaceTab.ID) {
         guard let tab = tabs.tab(id: id) else { return }
-        if let model = tableModels[id], model.hasPendingChanges {
+        let pending = pendingModels(for: id)
+        if !pending.isEmpty {
             tabs.select(id: id)
-            closePrompt = TabClosePrompt(tabID: id, title: tab.title, summary: model.pendingSummary)
+            let total = pending.reduce(0) { $0 + $1.pendingEditCount }
+            closePrompt = TabClosePrompt(tabID: id, title: tab.title, summary: "\(total) unsaved edit\(total == 1 ? "" : "s")")
             return
         }
         tabs.close(id: id)
@@ -279,9 +296,9 @@ final class ConnectionWorkspace: Identifiable {
         switch choice {
         case .review:
             tabs.select(id: prompt.tabID)
-            tableModels[prompt.tabID]?.reviewPresented = true
+            pendingModels(for: prompt.tabID).first?.reviewPresented = true
         case .discard:
-            tableModels[prompt.tabID]?.discardAll()
+            for model in pendingModels(for: prompt.tabID) { model.discardAll() }
             tabs.close(id: prompt.tabID)
         case .cancel:
             break
@@ -386,6 +403,101 @@ final class ConnectionWorkspace: Identifiable {
         tabs.select(id: tabs.tabs[index].id)
     }
 
+    // MARK: Query tabs
+
+    /// The model behind a query tab, created on first use from the tab's persisted text.
+    func queryModel(forTab tab: WorkspaceTab) -> QueryTabModel? {
+        guard case .query = tab.kind else { return nil }
+        if let existing = queryModels[tab.id] { return existing }
+        let open = Set(tabs.tabs.map(\.id))
+        queryModels = queryModels.filter { open.contains($0.key) }
+        let model = QueryTabModel(profile: profile, text: tab.queryText ?? "")
+        model.sessionProvider = { [weak self] in self?.live?.session }
+        model.inspectorProvider = { [weak self] in self?.browser.inspector }
+        model.schemaProvider = { [weak self] in self?.browser.selectedSchema ?? self?.selectedDatabase }
+        model.gate = gate
+        model.history = queryServices.history(for: profile.id)
+        model.savedQueries = queryServices.savedQueries
+        let tabID = tab.id
+        model.onHistoryChanged = { [weak self] in
+            guard let self else { return }
+            Task { await self.queryLibrary.reload() }
+        }
+        model.onDirtyChange = { [weak self] dirty in self?.tabs.setDirty(id: tabID, dirty) }
+        model.onTextPersist = { [weak self] text in self?.tabs.setQueryText(id: tabID, text) }
+        model.onLinked = { [weak self] q in
+            self?.tabs.link(id: tabID, savedQueryID: q.id, title: q.name)
+            Task { await self?.queryLibrary.reload() }
+        }
+        if let savedID = tab.savedQueryID {
+            Task { [weak model, store = queryServices.savedQueries] in
+                if let q = try? await store.query(id: savedID) { model?.attach(saved: q) }
+            }
+        }
+        queryModels[tab.id] = model
+        return model
+    }
+
+    /// The model of the selected tab when it is a query tab.
+    var currentQueryModel: QueryTabModel? {
+        tabs.selectedTab.flatMap { queryModel(forTab: $0) }
+    }
+
+    /// Opens a new query tab holding `text`.
+    @discardableResult
+    func newQuery(text: String) -> QueryTabModel? {
+        let id = tabs.newQuery(text: text)
+        return tabs.tab(id: id).flatMap { queryModel(forTab: $0) }
+    }
+
+    /// History click: into the current editor, or a new tab with ⌥ (or when no query tab is selected).
+    func openHistory(_ entry: HistoryEntry, inNewTab: Bool) {
+        if inNewTab || currentQueryModel == nil {
+            newQuery(text: entry.editorText)
+        } else {
+            currentQueryModel?.setEditorText(entry.editorText)
+        }
+    }
+
+    /// "Run Again": loads the SQL and runs it through the runner and the write guard. Truncated entries can only be opened.
+    func runHistory(_ entry: HistoryEntry) {
+        guard let sql = entry.rerunScript else {
+            openHistory(entry, inNewTab: false)
+            return
+        }
+        let model = currentQueryModel ?? newQuery(text: sql)
+        Task { await model?.loadAndRun(sql) }
+    }
+
+    func openSaved(_ query: SavedQuery) {
+        let id = tabs.openSavedQuery(id: query.id, name: query.name, sql: query.sql)
+        if let tab = tabs.tab(id: id) { queryModel(forTab: tab)?.attach(saved: query) }
+    }
+
+    func runSaved(_ query: SavedQuery) {
+        openSaved(query)
+        guard let model = currentQueryModel else { return }
+        Task { await model.run(.all) }
+    }
+
+    func insertSnippet(_ snippet: Snippet) {
+        let model = currentQueryModel ?? newQuery(text: "")
+        model?.insertSnippet(snippet.sql)
+        model?.editor.focus()
+    }
+
+    private func savedQueryChanged(_ query: SavedQuery) {
+        for tab in tabs.tabs where tab.savedQueryID == query.id { tabs.rename(id: tab.id, to: query.name) }
+        for model in queryModels.values { model.savedQueryUpdated(query) }
+    }
+
+    private func savedQueryDeleted(_ id: UUID) {
+        for tab in tabs.tabs where tab.savedQueryID == id {
+            tabs.link(id: tab.id, savedQueryID: nil)
+            queryModels[tab.id]?.detachSaved()
+        }
+    }
+
     // MARK: Table tabs
 
     /// Opens (or focuses) a table's tab; `filter` replaces the tab's chips (foreign-key navigation).
@@ -423,6 +535,7 @@ final class ConnectionWorkspace: Identifiable {
     /// ⌘R: re-read schemas and tables, and the structure of open tables.
     func refreshSchema() {
         browser.refresh()
+        for model in queryModels.values { model.invalidateCatalog() }
         for model in tableModels.values { model.invalidateStructure() }
         if let tab = tabs.selectedTab, let model = tableModel(forTab: tab), model.hasLoaded { model.reload() }
     }

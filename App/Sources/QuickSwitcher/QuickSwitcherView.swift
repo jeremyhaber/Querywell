@@ -168,6 +168,8 @@ struct QuickSwitcherView: View {
                 .accessibilityHidden(true)
         case .table:
             Image(systemName: "tablecells").foregroundStyle(Theme.textSecondary)
+        case .savedQuery:
+            Image(systemName: "bookmark").foregroundStyle(Theme.tabQuery)
         case .action(let action):
             Image(systemName: Self.symbol(for: action)).foregroundStyle(Theme.textSecondary)
         }
