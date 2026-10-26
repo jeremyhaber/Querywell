@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Export database</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E9EAEE}
+a{color:#2459D6}a:hover{color:#1A43A8}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 760px; height: 680px; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #1C1D22; background: #FFFFFF; border-radius: 12px; overflow: hidden; border: 1px solid #D4D6DC; box-shadow: 0 20px 48px rgba(20,22,30,0.18); display: flex; flex-direction: column">
+
+<div style="padding: 20px 24px 14px; border-bottom: 1px solid #E2E3E8">
+<h1 style="margin: 0 0 4px; font-size: 17px; font-weight: 600">Export wp_sunset</h1>
+<p style="margin: 0; font-size: 13px; color: #5C5F6A">sunset-web01 · MySQL 8.0 · 48 tables · about 210 MB</p>
+</div>
+
+<div style="flex: 1; overflow: auto; padding: 18px 24px; display: flex; flex-direction: column; gap: 18px">
+
+<fieldset style="border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px">
+<legend style="font-size: 11px; font-weight: 600; color: #5C5F6A; letter-spacing: 0.04em; margin-bottom: 8px">WHERE IT RUNS</legend>
+<label style="display: flex; gap: 10px; padding: 12px; border: 1.5px solid {{accent}}; border-radius: 10px; background: #F4F7FE; cursor: pointer">
+<input type="radio" name="where" checked style="margin-top: 2px">
+<span style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-size: 13px; font-weight: 600">On the server over SSH <span style="font-size: 11px; font-weight: 500; color: #173E99; background: #E3EBFB; padding: 1px 6px; border-radius: 4px; margin-left: 4px">Fastest</span></span>
+<span style="font-size: 12px; color: #45474F">Runs mysqldump on web01, gzips it there, then downloads one compressed file.</span>
+</span>
+</label>
+<label style="display: flex; gap: 10px; padding: 12px; border: 1px solid #E2E3E8; border-radius: 10px; cursor: pointer">
+<input type="radio" name="where" style="margin-top: 2px">
+<span style="display: flex; flex-direction: column; gap: 2px">
+<span style="font-size: 13px; font-weight: 600">On this Mac through the tunnel</span>
+<span style="font-size: 12px; color: #45474F">Uses mysqldump from Homebrew (found: 8.4.2). Slower on large tables.</span>
+</span>
+</label>
+</fieldset>
+
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px">
+<fieldset style="border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px">
+<legend style="font-size: 11px; font-weight: 600; color: #5C5F6A; letter-spacing: 0.04em; margin-bottom: 8px">CONTENT</legend>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px"><input type="radio" name="content" checked>Structure and data</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px"><input type="radio" name="content">Structure only</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px"><input type="radio" name="content">Data only</label>
+</fieldset>
+<fieldset style="border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px">
+<legend style="font-size: 11px; font-weight: 600; color: #5C5F6A; letter-spacing: 0.04em; margin-bottom: 8px">OPTIONS</legend>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px"><input type="checkbox" checked>Single transaction (no locks)</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px"><input type="checkbox" checked>Add DROP TABLE</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px"><input type="checkbox" checked>Compress (.sql.gz)</label>
+<label style="display: flex; align-items: center; gap: 8px; font-size: 13px"><input type="checkbox">Skip transients in wp_options</label>
+</fieldset>
+</div>
+
+<div style="display: flex; align-items: center; gap: 12px; font-size: 13px">
+<span style="font-size: 11px; font-weight: 600; color: #5C5F6A; letter-spacing: 0.04em">TABLES</span>
+<span>All 48 tables</span>
+<button style="border: none; background: transparent; color: #2459D6; font-size: 13px; cursor: pointer; padding: 0">Choose…</button>
+<div style="flex: 1"></div>
+<span style="font-size: 11px; font-weight: 600; color: #5C5F6A; letter-spacing: 0.04em">SAVE TO</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 12px">~/Downloads/wp_sunset-2026-10-26.sql.gz</span>
+</div>
+
+<details open style="border: 1px solid #E2E3E8; border-radius: 10px; background: #16171C">
+<summary style="padding: 8px 12px; font-size: 12px; color: #C9CBD3; cursor: pointer">Command preview</summary>
+<pre style="margin: 0; padding: 0 12px 12px; font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6; color: #E6E7EB; white-space: pre-wrap"><span style="color: #7FA8FF">ssh</span> web01 \
+  "mysqldump --single-transaction --add-drop-table \
+   wp_sunset | gzip -6" \
+  &gt; ~/Downloads/wp_sunset-2026-10-26.sql.gz</pre>
+</details>
+
+<div style="border: 1px solid #E2E3E8; border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; font-size: 12px">
+<span style="font-weight: 600">Dumping wp_postmeta</span>
+<div style="flex: 1"></div>
+<span style="color: #45474F">31 of 48 tables · 41 MB downloaded</span>
+</div>
+<div role="progressbar" aria-label="Export progress" aria-valuenow="64" aria-valuemin="0" aria-valuemax="100" style="height: 6px; border-radius: 3px; background: #EFF0F3; overflow: hidden">
+<div style="width: 64%; height: 100%; background: {{accent}}"></div>
+</div>
+</div>
+</div>
+
+<div style="display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-top: 1px solid #E2E3E8; background: #FAFAFB">
+<button style="border: none; background: transparent; color: #2459D6; font-size: 13px; cursor: pointer; padding: 0">Copy command</button>
+<div style="flex: 1"></div>
+<button style="border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 8px; padding: 8px 16px; font-size: 13px; cursor: pointer; min-height: 36px">Cancel</button>
+<button style="border: none; background: {{accent}}; color: #FFFFFF; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 500; cursor: pointer; min-height: 36px">Export</button>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2459D6","options":["#2459D6","#5B3FD1","#0F7B6C","#1C1D22"]},"$preview":{"width":760,"height":680}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { accent: this.props.accent ?? '#2459D6' };
+  }
+}
+</script>
+</body>
+</html>

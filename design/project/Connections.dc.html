@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Saved connections</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E9EAEE}
+a{color:#2459D6}a:hover{color:#1A43A8}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 960px; height: 640px; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #1C1D22; background: #FFFFFF; border-radius: 12px; overflow: hidden; border: 1px solid #D4D6DC; display: flex">
+
+<aside style="width: 220px; flex: none; background: #F6F6F8; border-right: 1px solid #E2E3E8; padding: 14px 12px; display: flex; flex-direction: column; gap: 4px">
+<div aria-hidden="true" style="display: flex; gap: 8px; margin-bottom: 18px">
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5F57"></span>
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #FEBC2E"></span>
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #28C840"></span>
+</div>
+<div style="font-size: 11px; font-weight: 600; color: #5C5F6A; letter-spacing: 0.04em; padding: 0 8px 6px">FOLDERS</div>
+<sc-for list="{{folders}}" as="f" hint-placeholder-count="5">
+<button style="{{f.style}}">
+<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+<span style="flex: 1; text-align: left">{{f.name}}</span>
+<span style="font-size: 11px; color: #8A8D98">{{f.count}}</span>
+</button>
+</sc-for>
+<div style="flex: 1"></div>
+<div style="font-size: 11px; font-weight: 600; color: #5C5F6A; letter-spacing: 0.04em; padding: 0 8px 6px">TAGS</div>
+<div style="display: flex; flex-direction: column; gap: 6px; padding: 0 8px; font-size: 12px; color: #45474F">
+<span style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: #C4314B"></span>Production · confirm writes</span>
+<span style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: #E0A030"></span>Staging</span>
+<span style="display: flex; align-items: center; gap: 8px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 3px; background: #2E9E5B"></span>Local</span>
+</div>
+</aside>
+
+<main style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<div style="display: flex; align-items: center; gap: 12px; padding: 18px 24px 14px">
+<h1 style="margin: 0; font-size: 20px; font-weight: 600; flex: 1">Client sites</h1>
+<label style="display: flex; align-items: center; gap: 8px; width: 240px; padding: 7px 10px; border: 1px solid #E2E3E8; border-radius: 8px; color: #5C5F6A">
+<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+<input type="text" placeholder="Search connections" aria-label="Search connections" style="border: none; outline: none; font-family: inherit; font-size: 13px; flex: 1; min-width: 0">
+</label>
+<button style="display: flex; align-items: center; gap: 6px; padding: 8px 14px; border: none; background: {{accent}}; color: #FFFFFF; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; min-height: 36px">
+<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+New connection
+</button>
+</div>
+
+<div style="flex: 1; overflow: auto; padding: 0 24px 24px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-content: start">
+<sc-for list="{{conns}}" as="c" hint-placeholder-count="6">
+<div style="{{c.cardStyle}}">
+<div style="display: flex; align-items: center; gap: 10px">
+<span style="{{c.tagStyle}}" aria-hidden="true"></span>
+<h2 style="margin: 0; font-size: 14px; font-weight: 600; flex: 1">{{c.name}}</h2>
+<span style="font-size: 11px; font-weight: 500; color: #45474F; background: #EFF0F3; padding: 2px 7px; border-radius: 4px">{{c.engine}}</span>
+</div>
+<div style="font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #45474F">{{c.host}}</div>
+<div style="display: flex; align-items: center; gap: 12px; font-size: 12px; color: #5C5F6A">
+<span style="display: flex; align-items: center; gap: 4px"><svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>{{c.via}}</span>
+<span>{{c.last}}</span>
+<div style="flex: 1"></div>
+<button style="border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer">Edit</button>
+<button style="border: none; background: #E3EBFB; color: #173E99; border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 500; cursor: pointer">Connect</button>
+</div>
+</div>
+</sc-for>
+</div>
+<div style="padding: 10px 24px; border-top: 1px solid #E2E3E8; font-size: 12px; color: #5C5F6A; display: flex; gap: 16px">
+<span>Passwords and SSH keys stored in Keychain</span>
+<span>Double-click opens each connection in its own window</span>
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2459D6","options":["#2459D6","#5B3FD1","#0F7B6C","#1C1D22"]},"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#2459D6';
+    const fBase = 'display:flex;align-items:center;gap:8px;width:100%;border:none;border-radius:6px;padding:7px 8px;font-size:13px;cursor:pointer;font-family:inherit;';
+    const folders = [['All connections','9'],['Client sites','6'],['Own apps','2'],['Local','1'],['Favourites','3']]
+      .map(([name, count]) => ({ name, count, style: fBase + (name === 'Client sites' ? 'background:#E3EBFB;color:#173E99;font-weight:500;' : 'background:transparent;color:#1C1D22;') }));
+    const tag = { prod: '#C4314B', stage: '#E0A030', local: '#2E9E5B' };
+    const conns = [
+      ['sunset-web01','prod','MySQL 8.0','web01 · 127.0.0.1:3306','SSH key','2 min ago'],
+      ['sunset-web02','prod','MariaDB 10.11','web02 · 127.0.0.1:3306','SSH key','Yesterday'],
+      ['brightcart staging','stage','MySQL 8.0','staging · 127.0.0.1:3306','SSH agent','3 days ago'],
+      ['sureshot staging','stage','MySQL 8.0','staging · 127.0.0.1:3306','SSH agent','Last week'],
+      ['magnet summit','prod','MySQL 5.7','web01 · 127.0.0.1:3306','SSH key','Oct 23'],
+      ['member portal dev','stage','MariaDB 10.6','dev · 127.0.0.1:3306','Password + TLS','Sep 23']
+    ].map(([name, t, engine, host, via, last]) => ({
+      name, engine, host, via, last,
+      tagStyle: 'width:10px;height:10px;border-radius:3px;background:' + tag[t],
+      cardStyle: 'display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid ' + (name === 'sunset-web01' ? '#9DB6EE' : '#E2E3E8') + ';border-radius:10px;background:#FFFFFF;'
+    }));
+    return { accent, folders, conns };
+  }
+}
+</script>
+</body>
+</html>

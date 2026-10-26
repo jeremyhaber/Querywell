@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Column filters</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E9EAEE}
+a{color:#2459D6}a:hover{color:#1A43A8}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 960px; height: 640px; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #1C1D22; background: #FFFFFF; border-radius: 12px; overflow: hidden; border: 1px solid #D4D6DC; display: flex; flex-direction: column; position: relative">
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid #E2E3E8; background: #FAFAFB">
+<button style="display: flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 8px; font-size: 13px; cursor: pointer">
+<svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16l-6 8v6l-4-2v-4z"/></svg>
+Saved: Published pages
+<svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+</button>
+<span aria-hidden="true" style="width: 1px; height: 20px; background: #E2E3E8"></span>
+<sc-for list="{{chips}}" as="c" hint-placeholder-count="3">
+<span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 4px 4px 10px; border-radius: 999px; background: #E3EBFB; color: #173E99; font-size: 12px">
+<span style="font-weight: 600">{{c.col}}</span>
+<span>{{c.op}}</span>
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px">{{c.val}}</span>
+<button aria-label="Remove filter" style="width: 20px; height: 20px; border: none; border-radius: 50%; background: #C9D7F5; color: #173E99; font-size: 12px; line-height: 1; cursor: pointer">×</button>
+</span>
+</sc-for>
+<button style="padding: 4px 10px; border: 1px dashed #B9BCC6; background: transparent; border-radius: 999px; font-size: 12px; color: #45474F; cursor: pointer">+ Add filter</button>
+<div style="flex: 1"></div>
+<button style="padding: 5px 10px; border: none; background: transparent; font-size: 12px; color: #2459D6; cursor: pointer">Show as SQL</button>
+<button style="padding: 5px 12px; border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 8px; font-size: 12px; cursor: pointer">Save filter…</button>
+</div>
+
+<div style="flex: 1; overflow: auto">
+<table style="border-collapse: collapse; width: 100%; font-size: 13px">
+<thead>
+<tr style="background: #FAFAFB; text-align: left">
+<th scope="col" style="padding: 8px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600">ID</th>
+<th scope="col" style="padding: 8px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600">post_title</th>
+<th scope="col" style="padding: 8px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600; background: #EEF3FD">
+<span style="display: flex; align-items: center; gap: 6px">post_status
+<svg role="img" aria-label="Filtered" width="12" height="12" viewBox="0 0 24 24" fill="{{accent}}" stroke="{{accent}}" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16l-6 8v6l-4-2v-4z"/></svg></span>
+</th>
+<th scope="col" style="padding: 8px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600">post_type</th>
+<th scope="col" style="padding: 8px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600">post_modified</th>
+</tr>
+</thead>
+<tbody>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="10">
+<tr>
+<td style="padding: 7px 12px; border-bottom: 1px solid #F0F1F4; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5C5F6A">{{r.id}}</td>
+<td style="padding: 7px 12px; border-bottom: 1px solid #F0F1F4">{{r.title}}</td>
+<td style="padding: 7px 12px; border-bottom: 1px solid #F0F1F4"><span style="display: inline-block; font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; background: #E2F4E8; color: #1F6B3F">publish</span></td>
+<td style="padding: 7px 12px; border-bottom: 1px solid #F0F1F4; font-family: 'JetBrains Mono', monospace; font-size: 12px">page</td>
+<td style="padding: 7px 12px; border-bottom: 1px solid #F0F1F4; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #45474F">{{r.mod}}</td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+
+<section aria-label="Filter post_status" style="position: absolute; left: 330px; top: 92px; width: 280px; background: #FFFFFF; border: 1px solid #D4D6DC; border-radius: 10px; box-shadow: 0 12px 32px rgba(20,22,30,0.16); padding: 14px; display: flex; flex-direction: column; gap: 12px">
+<h2 style="margin: 0; font-size: 13px; font-weight: 600">Filter post_status</h2>
+<label style="display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 600; color: #5C5F6A">Condition
+<select style="font-family: inherit; font-size: 13px; padding: 6px 8px; border: 1px solid #E2E3E8; border-radius: 6px; background: #FFFFFF"><option>is any of</option><option>is not</option><option>contains</option><option>is empty</option></select>
+</label>
+<label style="display: flex; align-items: center; gap: 8px; border: 1px solid #E2E3E8; border-radius: 6px; padding: 6px 8px">
+<svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#5C5F6A" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+<input type="text" placeholder="Search values" aria-label="Search values" style="border: none; outline: none; font-family: inherit; font-size: 13px; flex: 1; min-width: 0">
+</label>
+<div style="display: flex; flex-direction: column; gap: 2px">
+<sc-for list="{{values}}" as="v" hint-placeholder-count="5">
+<label style="display: flex; align-items: center; gap: 8px; padding: 6px 4px; font-size: 13px; border-radius: 6px">
+<input type="checkbox" checked="{{v.on}}">
+<span style="flex: 1; font-family: 'JetBrains Mono', monospace; font-size: 12px">{{v.name}}</span>
+<span style="font-size: 11px; color: #5C5F6A">{{v.count}}</span>
+</label>
+</sc-for>
+</div>
+<div style="display: flex; gap: 8px">
+<button style="flex: 1; border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 8px; padding: 7px; font-size: 13px; cursor: pointer">Clear</button>
+<button style="flex: 1; border: none; background: {{accent}}; color: #FFFFFF; border-radius: 8px; padding: 7px; font-size: 13px; font-weight: 500; cursor: pointer">Apply</button>
+</div>
+</section>
+
+<footer style="display: flex; gap: 16px; padding: 8px 16px; border-top: 1px solid #E2E3E8; background: #FAFAFB; font-size: 12px; color: #5C5F6A; font-family: 'JetBrains Mono', monospace">
+<span>WHERE post_status IN ('publish') AND post_type = 'page' AND post_modified &gt;= NOW() - INTERVAL 30 DAY</span>
+</footer>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2459D6","options":["#2459D6","#5B3FD1","#0F7B6C","#1C1D22"]},"$preview":{"width":960,"height":640}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#2459D6';
+    const chips = [
+      { col: 'post_status', op: 'is', val: 'publish' },
+      { col: 'post_type', op: '=', val: 'page' },
+      { col: 'post_modified', op: 'in', val: 'last 30 days' }
+    ];
+    const values = [
+      { name: 'publish', count: '1,486', on: true },
+      { name: 'draft', count: '212', on: false },
+      { name: 'inherit', count: '388', on: false },
+      { name: 'private', count: '9', on: false },
+      { name: 'trash', count: '31', on: false }
+    ];
+    const rows = [
+      [1042,'Services','2026-10-26 07:58'],[1056,'Pricing','2026-10-20 14:55'],
+      [1084,'Thank You','2026-10-18 17:44'],[1038,'Home','2026-10-14 09:12'],
+      [1075,'Book a Call','2026-10-11 08:22'],[1060,'Case Studies','2026-10-02 13:31'],
+      [1040,'About','2026-09-30 16:40'],[1071,'FAQ','2026-09-27 15:06']
+    ].map(([id, title, mod]) => ({ id, title, mod }));
+    return { accent, chips, values, rows };
+  }
+}
+</script>
+</body>
+</html>

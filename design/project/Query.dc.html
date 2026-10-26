@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Query editor</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#E9EAEE}
+a{color:#2459D6}a:hover{color:#1A43A8}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 1200px; height: 760px; box-sizing: border-box; font-family: Inter, system-ui, sans-serif; color: #1C1D22; background: #FFFFFF; border-radius: 12px; overflow: hidden; border: 1px solid #D4D6DC; display: flex; flex-direction: column">
+
+<header style="display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: #F6F6F8; border-bottom: 1px solid #E2E3E8">
+<div aria-hidden="true" style="display: flex; gap: 8px">
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #FF5F57"></span>
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #FEBC2E"></span>
+<span style="width: 12px; height: 12px; border-radius: 50%; background: #28C840"></span>
+</div>
+<span style="font-size: 11px; font-weight: 600; letter-spacing: 0.04em; color: #FFFFFF; background: #C4314B; padding: 2px 6px; border-radius: 4px">PROD</span>
+<span style="font-size: 13px; font-weight: 600">sunset-web01</span>
+<span style="font-size: 12px; color: #5C5F6A">wp_sunset</span>
+</header>
+
+<nav aria-label="Open tabs" style="display: flex; align-items: flex-end; gap: 2px; padding: 0 12px; background: #F6F6F8; border-bottom: 1px solid #E2E3E8">
+<button style="display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: none; background: transparent; color: #5C5F6A; font-size: 13px; cursor: pointer"><span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 2px; background: {{accent}}"></span>wp_posts</button>
+<button style="display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: 1px solid #E2E3E8; border-bottom: none; border-radius: 8px 8px 0 0; background: #FFFFFF; color: #1C1D22; font-weight: 500; font-size: 13px; margin-bottom: -1px; cursor: pointer"><span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 2px; background: #6A3FC2"></span>Query 1 <span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 50%; background: #8A8D98"></span></button>
+<button style="display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: none; background: transparent; color: #5C5F6A; font-size: 13px; cursor: pointer"><span aria-hidden="true" style="width: 6px; height: 6px; border-radius: 2px; background: #1C1D22"></span>Console</button>
+<button aria-label="New tab" style="border: none; background: transparent; padding: 8px 10px; color: #5C5F6A; font-size: 16px; cursor: pointer">+</button>
+</nav>
+
+<div style="flex: 1; display: flex; min-height: 0">
+
+<aside style="width: 230px; flex: none; background: #FAFAFB; border-right: 1px solid #E2E3E8; padding: 12px; display: flex; flex-direction: column; gap: 8px">
+<div role="group" aria-label="Sidebar view" style="display: flex; background: #EFF0F3; border-radius: 8px; padding: 2px">
+<button style="flex: 1; border: none; background: #FFFFFF; box-shadow: 0 1px 2px rgba(0,0,0,0.12); border-radius: 6px; padding: 5px; font-size: 12px; font-weight: 500; cursor: pointer">History</button>
+<button style="flex: 1; border: none; background: transparent; border-radius: 6px; padding: 5px; font-size: 12px; color: #45474F; cursor: pointer">Snippets</button>
+</div>
+<sc-for list="{{history}}" as="h" hint-placeholder-count="6">
+<button style="{{h.style}}">
+<span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #1C1D22; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block">{{h.sql}}</span>
+<span style="font-size: 11px; color: #5C5F6A">{{h.meta}}</span>
+</button>
+</sc-for>
+</aside>
+
+<main style="flex: 1; min-width: 0; display: flex; flex-direction: column">
+<div style="display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid #E2E3E8">
+<button style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; border: none; background: {{accent}}; color: #FFFFFF; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; min-height: 32px">
+<svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z"/></svg>
+Run <span style="font-size: 11px; opacity: 0.85">⌘↵</span>
+</button>
+<button style="padding: 6px 12px; border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 8px; font-size: 13px; cursor: pointer; min-height: 32px">Run selection</button>
+<button style="padding: 6px 12px; border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 8px; font-size: 13px; cursor: pointer; min-height: 32px">Explain</button>
+<button style="padding: 6px 12px; border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 8px; font-size: 13px; cursor: pointer; min-height: 32px">Format</button>
+<div style="flex: 1"></div>
+<button style="padding: 6px 12px; border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 8px; font-size: 13px; cursor: pointer; min-height: 32px">Save as snippet</button>
+</div>
+
+<div style="height: 250px; flex: none; display: flex; font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 22px; border-bottom: 1px solid #E2E3E8; position: relative">
+<div aria-hidden="true" style="width: 44px; flex: none; text-align: right; padding: 12px 10px 0 0; color: #A3A6B0; background: #FAFAFB; white-space: pre-line">1
+2
+3
+4
+5
+6
+7
+8
+9</div>
+<pre style="margin: 0; padding: 12px 16px; flex: 1; color: #1C1D22; font-family: inherit; white-space: pre"><span style="color: #8A8D98">-- Pages edited this month, with author</span>
+<span style="color: #6A3FC2; font-weight: 500">SELECT</span> p.ID, p.post_title, p.post_modified, u.display_name
+<span style="color: #6A3FC2; font-weight: 500">FROM</span> wp_posts p
+<span style="color: #6A3FC2; font-weight: 500">JOIN</span> wp_users u <span style="color: #6A3FC2; font-weight: 500">ON</span> u.ID = p.post_author
+<span style="color: #6A3FC2; font-weight: 500">WHERE</span> p.post_type = <span style="color: #1F7A4D">'page'</span>
+  <span style="color: #6A3FC2; font-weight: 500">AND</span> p.post_modified &gt;= <span style="color: #0F6E8C">NOW</span>() - <span style="color: #6A3FC2; font-weight: 500">INTERVAL</span> <span style="color: #B05A00">30</span> <span style="color: #6A3FC2; font-weight: 500">DAY</span>
+<span style="color: #6A3FC2; font-weight: 500">ORDER BY</span> p.post_modified <span style="color: #6A3FC2; font-weight: 500">DESC</span>;
+
+<span style="color: #6A3FC2; font-weight: 500">SELECT</span> <span style="color: #0F6E8C">COUNT</span>(*) <span style="color: #6A3FC2; font-weight: 500">FROM</span> wp_posts <span style="color: #6A3FC2; font-weight: 500">WHERE</span> post_status = <span style="color: #1F7A4D">'dr</span><span style="border-left: 2px solid {{accent}}"></span></pre>
+<div role="listbox" aria-label="Autocomplete" style="position: absolute; left: 470px; top: 232px; width: 260px; background: #FFFFFF; border: 1px solid #D4D6DC; border-radius: 8px; box-shadow: 0 8px 24px rgba(20,22,30,0.14); padding: 4px; font-size: 12px; z-index: 2">
+<div role="option" aria-selected="true" style="display: flex; justify-content: space-between; padding: 6px 8px; border-radius: 5px; background: #E3EBFB; color: #173E99"><span>'draft'</span><span style="color: #45474F">212 rows</span></div>
+<div role="option" style="display: flex; justify-content: space-between; padding: 6px 8px; border-radius: 5px"><span>'dropped'</span><span style="color: #5C5F6A">0 rows</span></div>
+</div>
+</div>
+
+<div style="display: flex; align-items: center; gap: 4px; padding: 6px 14px 0; border-bottom: 1px solid #E2E3E8; margin-top: 40px">
+<button style="padding: 7px 12px; border: none; border-bottom: 2px solid {{accent}}; background: transparent; font-size: 13px; font-weight: 500; cursor: pointer">Result 1 · 24 rows</button>
+<button style="padding: 7px 12px; border: none; border-bottom: 2px solid transparent; background: transparent; font-size: 13px; color: #5C5F6A; cursor: pointer">Result 2 · 1 row</button>
+<button style="padding: 7px 12px; border: none; border-bottom: 2px solid transparent; background: transparent; font-size: 13px; color: #5C5F6A; cursor: pointer">Messages</button>
+<div style="flex: 1"></div>
+<span style="font-size: 12px; color: #5C5F6A; display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>Editable · single table with key</span>
+</div>
+
+<div style="flex: 1; overflow: auto">
+<table style="border-collapse: collapse; width: 100%; font-size: 13px">
+<thead>
+<tr style="background: #FAFAFB; text-align: left">
+<th scope="col" style="padding: 7px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600">ID</th>
+<th scope="col" style="padding: 7px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600">post_title</th>
+<th scope="col" style="padding: 7px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600">post_modified</th>
+<th scope="col" style="padding: 7px 12px; border-bottom: 1px solid #E2E3E8; font-size: 12px; font-weight: 600">display_name</th>
+</tr>
+</thead>
+<tbody>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="5">
+<tr>
+<td style="padding: 6px 12px; border-bottom: 1px solid #F0F1F4; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #5C5F6A">{{r.id}}</td>
+<td style="padding: 6px 12px; border-bottom: 1px solid #F0F1F4">{{r.title}}</td>
+<td style="padding: 6px 12px; border-bottom: 1px solid #F0F1F4; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #45474F">{{r.mod}}</td>
+<td style="padding: 6px 12px; border-bottom: 1px solid #F0F1F4">{{r.who}}</td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+<footer style="display: flex; gap: 16px; padding: 7px 16px; border-top: 1px solid #E2E3E8; background: #FAFAFB; font-size: 12px; color: #5C5F6A">
+<span>2 statements · 18 ms</span>
+<span>Read-only query — no confirmation needed</span>
+<div style="flex: 1"></div>
+<button style="border: 1px solid #E2E3E8; background: #FFFFFF; border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer">Copy as CSV</button>
+</footer>
+</main>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#2459D6","options":["#2459D6","#5B3FD1","#0F7B6C","#1C1D22"]},"$preview":{"width":1200,"height":760}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#2459D6';
+    const hb = 'display:flex;flex-direction:column;gap:3px;width:100%;text-align:left;border:none;border-radius:6px;padding:8px;cursor:pointer;font-family:inherit;';
+    const history = [
+      ['SELECT p.ID, p.post_title …', 'Now · 24 rows', true],
+      ['UPDATE wp_options SET option_value …', '8:02 · 1 row changed'],
+      ['SHOW PROCESSLIST', '7:58 · 6 rows'],
+      ['SELECT * FROM wp_users', 'Yesterday · 18 rows'],
+      ['DELETE FROM wp_options WHERE …', 'Yesterday · 412 rows'],
+      ['SELECT option_name, LENGTH(…)', 'Oct 23 · 50 rows']
+    ].map(([sql, meta, on]) => ({ sql, meta, style: hb + (on ? 'background:#E3EBFB;' : 'background:transparent;') }));
+    const rows = [
+      [1042,'Services','2026-10-26 07:58','Jeremy'],
+      [1056,'Pricing','2026-10-20 14:55','Jeremy'],
+      [1084,'Thank You','2026-10-18 17:44','Jeremy'],
+      [1038,'Home','2026-10-14 09:12','Jeremy'],
+      [1075,'Book a Call','2026-10-11 08:22','Jeremy'],
+      [1060,'Case Studies','2026-10-02 13:31','Jeremy']
+    ].map(([id, title, mod, who]) => ({ id, title, mod, who }));
+    return { accent, history, rows };
+  }
+}
+</script>
+</body>
+</html>
