@@ -147,7 +147,7 @@ struct SearchReplaceSheet: View {
     private var tablePicker: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                CaptionLabel("Tables")
+                CaptionLabel("Tables").fixedSize()  // never wrap ("TABLE / S") when the WordPress badge is shown
                 if let prefix = model.wordPressPrefix {
                     Text("WordPress (\(prefix))").font(.system(size: 10.5, weight: .medium)).lineLimit(1).fixedSize().foregroundStyle(Theme.accentSubtleText)
                         .padding(.horizontal, 5).padding(.vertical, 1)

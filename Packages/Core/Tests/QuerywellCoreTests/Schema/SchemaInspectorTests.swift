@@ -52,7 +52,10 @@ struct SchemaInspectorIntegrationTests {
             } else {
                 #expect(schemas.contains("information_schema"))
                 #expect(schemas.contains("querywell_test") || schemas.contains("mysql"))
-                #expect(schemas == (try await f.session.listDatabases()))
+                // Other suites create/drop temporary `qw_*` / `qw7_*` databases concurrently, so the two
+                // lists (read at different moments) are compared without them.
+                let stable: (String) -> Bool = { !$0.hasPrefix("qw_") && !$0.hasPrefix("qw7_") }
+                #expect(schemas.filter(stable) == (try await f.session.listDatabases()).filter(stable))
             }
         }
     }
