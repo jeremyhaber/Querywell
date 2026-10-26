@@ -135,11 +135,12 @@ struct ConnectionDraftTests {
 
     @Test func testSecrets() {
         var d = validDraft()
-        #expect(d.testSecrets == ConnectionSecrets())
+        // Cleared fields are sent as empty, never falling back to a stored secret.
+        #expect(d.testSecrets == ConnectionSecrets(databasePassword: "", sshSecret: nil))
         d.databasePassword = "pw"; d.sshSecret = "pp"
         #expect(d.testSecrets == ConnectionSecrets(databasePassword: "pw", sshSecret: nil))   // SSH off
         d.useSSH = true; d.sshAuth = .agent
-        #expect(d.testSecrets.sshSecret == nil)
+        #expect(d.testSecrets.sshSecret == "")
         d.sshAuth = .keyFile
         #expect(d.testSecrets == ConnectionSecrets(databasePassword: "pw", sshSecret: "pp"))
     }

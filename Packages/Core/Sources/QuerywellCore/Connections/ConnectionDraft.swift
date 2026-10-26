@@ -198,12 +198,13 @@ public struct ConnectionDraft: Sendable, Equatable {
         ]
     }
 
-    /// Secrets to overlay for ``ConnectionTester/test(_:secrets:progress:)``. Empty fields
-    /// are `nil` (fall back to the store; a never-saved draft has nothing stored). The SSH
-    /// secret is `nil` unless SSH is on with password or key-file auth.
+    /// Secrets to overlay for ``ConnectionTester/test(_:secrets:progress:)``. The draft holds the
+    /// complete secret state (it is loaded from the store when editing), so values are sent as-is:
+    /// a field the user cleared tests as "no password" rather than silently using the stored one.
+    /// The SSH secret is `""` when SSH is on with agent auth (agent needs none) and `nil` when SSH is off.
     public var testSecrets: ConnectionSecrets {
         ConnectionSecrets(
-            databasePassword: databasePassword.isEmpty ? nil : databasePassword,
-            sshSecret: (useSSH && sshAuth != .agent && !sshSecret.isEmpty) ? sshSecret : nil)
+            databasePassword: databasePassword,
+            sshSecret: useSSH ? (sshAuth == .agent ? "" : sshSecret) : nil)
     }
 }
