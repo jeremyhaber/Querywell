@@ -22,8 +22,12 @@ struct WindowAccessor: NSViewRepresentable {
             super.viewDidMoveToWindow()
             guard let window else { return }
             let callback = onWindow
-            // Defer so SwiftUI has finished installing its own delegate.
-            DispatchQueue.main.async { callback?(window) }
+            // Defer so SwiftUI has finished installing its own delegate. Weak: the window may be
+            // gone by the time this runs.
+            DispatchQueue.main.async { [weak window] in
+                guard let window else { return }
+                callback?(window)
+            }
         }
     }
 }
