@@ -104,6 +104,7 @@ struct Phase7SnapshotTests {
             }
             let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
             try png.write(to: outputDirectory.appendingPathComponent("\(name)-\(suffix).png"))
+            if suffix == "light" { AccessibilityAudit.audit(window, name: name) }
             window.orderOut(nil)
         }
     }

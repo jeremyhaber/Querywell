@@ -92,6 +92,7 @@ struct SnapshotTests {
             let png = try #require(NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]))
             try png.write(to: outputDirectory.appendingPathComponent("\(name)-\(suffix).png"))
             try await extra?(window, suffix)
+            if suffix == "light" { AccessibilityAudit.audit(window, name: name) }
             // Hide, don't close: closing a connection window (correctly) closes its workspace,
             // and these renders reuse one live connection.
             window.orderOut(nil)
