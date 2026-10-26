@@ -7,11 +7,13 @@ cd "$ROOT"
 
 SKIP_XCODE=0
 SKIP_PACKAGE=0
+SKIP_INTEGRATION=0
 for arg in "$@"; do
   case "$arg" in
     --skip-xcode) SKIP_XCODE=1 ;;
     --skip-package) SKIP_PACKAGE=1 ;;
-    -h|--help) echo "usage: scripts/ci.sh [--skip-xcode] [--skip-package]"; exit 0 ;;
+    --skip-integration) SKIP_INTEGRATION=1 ;;
+    -h|--help) echo "usage: scripts/ci.sh [--skip-xcode] [--skip-package] [--skip-integration]"; exit 0 ;;
     *) echo "unknown flag: $arg" >&2; exit 2 ;;
   esac
 done
@@ -43,6 +45,20 @@ if [ "$SKIP_PACKAGE" -eq 0 ]; then
   if (cd Packages/Core && swift build -Xswiftc -warnings-as-errors); then record "package build" PASS; else record "package build" FAIL; summary; fi
   echo "==> swift test (Packages/Core)"
   if (cd Packages/Core && swift test -Xswiftc -warnings-as-errors); then record "package test" PASS; else record "package test" FAIL; summary; fi
+fi
+
+# b2) integration tests (docker); skipped when Docker is unavailable
+if [ "$SKIP_INTEGRATION" -eq 1 ]; then
+  STEPS+=("integration tests: SKIPPED")
+else
+  echo "==> scripts/integration.sh"
+  INT_LOG="$(mktemp)"
+  if scripts/integration.sh 2>&1 | tee "$INT_LOG"; then
+    if grep -q "Docker not available" "$INT_LOG"; then STEPS+=("integration tests: SKIPPED"); else record "integration tests" PASS; fi
+  else
+    record "integration tests" FAIL; rm -f "$INT_LOG"; summary
+  fi
+  rm -f "$INT_LOG"
 fi
 
 # c) app
