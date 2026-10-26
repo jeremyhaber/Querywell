@@ -117,7 +117,7 @@ struct ConsoleTerminalView: NSViewRepresentable {
                 tv.setSelectedRange(NSRange(location: min(location, storage.length), length: 0))
             }
             tv.sizeToFitContent()
-            tv.scrollRangeToVisible(NSRange(location: tv.selectedRange().location, length: 0))
+            tv.scrollCaretIntoView()
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -193,6 +193,21 @@ final class ConsoleNSTextView: NSTextView {
         let width = max(scroll.contentSize.width, used.width + textContainerInset.width * 2 + 24)
         let height = max(scroll.contentSize.height, used.height + textContainerInset.height * 2)
         if abs(frame.width - width) > 0.5 || abs(frame.height - height) > 0.5 { setFrameSize(NSSize(width: width, height: height)) }
+    }
+
+    /// Keeps the caret's line in view vertically, and scrolls sideways only when the caret itself is off screen
+    /// (a long statement); otherwise the left edge stays put so tables are read from their first column.
+    func scrollCaretIntoView() {
+        guard let layout = layoutManager, let scroll = enclosingScrollView, layout.numberOfGlyphs > 0 || selectedRange().location == 0 else { return }
+        let location = min(selectedRange().location, max(0, string.utf16.count))
+        let glyph = layout.glyphIndexForCharacter(at: min(location, max(0, layout.numberOfGlyphs - 1)))
+        var line = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let caretX = line.minX + layout.location(forGlyphAt: glyph).x + textContainerInset.width
+        line.origin.y += textContainerInset.height
+        let visible = scroll.contentView.bounds
+        line.origin.x = caretX > visible.width - 40 ? caretX - visible.width + 80 : 0
+        line.size.width = 1
+        scrollToVisible(line)
     }
 
     // MARK: Block cursor

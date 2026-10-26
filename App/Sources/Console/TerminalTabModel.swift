@@ -49,6 +49,8 @@ final class TerminalTabModel {
 
     @ObservationIgnored let profile: ConnectionProfile
     @ObservationIgnored var secretProvider: @MainActor () -> String? = { nil }
+    /// How ssh is invoked (tests point it at a throw-away known_hosts).
+    @ObservationIgnored var sshOptions = SSHClientOptions()
     @ObservationIgnored let terminalView = QuerywellTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
     @ObservationIgnored private var askpass: SSHAskpass?
     @ObservationIgnored private var bridge: TerminalDelegateBridge?
@@ -78,7 +80,7 @@ final class TerminalTabModel {
     /// The command line that would be run, with no secret in it (tests and the status line).
     var command: SSHTerminalCommand? {
         guard let ssh = profile.ssh else { return nil }
-        return SSHTerminalCommand.make(for: ssh, hasSecret: secretProvider() != nil)
+        return SSHTerminalCommand.make(for: ssh, options: sshOptions, hasSecret: secretProvider() != nil)
     }
 
     func startIfNeeded() {
@@ -91,13 +93,13 @@ final class TerminalTabModel {
         if case .running = state { return }
         cleanupAskpass()
         let secret = secretProvider().flatMap { $0.isEmpty ? nil : $0 }
-        let command = SSHTerminalCommand.make(for: ssh, hasSecret: secret != nil)
+        let command = SSHTerminalCommand.make(for: ssh, options: sshOptions, hasSecret: secret != nil)
         var env = Terminal.getEnvironmentVariables(termName: "xterm-256color")
         let inherited = ProcessInfo.processInfo.environment
         for key in ["PATH", "SSH_AUTH_SOCK", "TMPDIR", "SHELL", "LC_ALL", "LC_CTYPE"] {
             if let value = inherited[key] { env.append("\(key)=\(value)") }
         }
-        if let secret, ssh.auth != .agent(socketPath: nil) {
+        if let secret {
             do {
                 let helper = try SSHAskpass.create(secret: secret)
                 askpass = helper

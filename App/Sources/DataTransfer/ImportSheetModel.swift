@@ -84,7 +84,7 @@ final class ImportSheetModel {
         self.profile = profile
         self.schemas = schemas
         let attrs = try? FileManager.default.attributesOfItem(atPath: file.path)
-        fileSize = (attrs?[.size] as? Int64) ?? Int64((attrs?[.size] as? Int) ?? 0)
+        fileSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
         fileDate = attrs?[.modificationDate] as? Date
         targetSchema = currentSchema ?? schemas.first
     }

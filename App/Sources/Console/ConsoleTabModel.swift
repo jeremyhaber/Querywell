@@ -328,6 +328,7 @@ final class ConsoleTabModel {
             guard await gate.confirm(pending.request, actionTitle: title),
                   let confirmed = pending.confirm(typed: pending.request.requiresTypedName ?? "") else {
                 append([ConsoleSegment(text: "Cancelled.", role: .muted)])
+                appendBlank()
                 return true
             }
             script = confirmed

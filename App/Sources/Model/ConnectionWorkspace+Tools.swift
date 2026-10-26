@@ -40,6 +40,7 @@ extension ConnectionWorkspace {
         guard case .terminal = tab.kind else { return nil }
         if let existing = tools.terminalModels[tab.id] { return existing }
         let model = TerminalTabModel(profile: profile)
+        model.sshOptions = tools.sshOptions
         let owner = profile.id.uuidString
         let kind: SecretKind? = switch profile.ssh?.auth {
         case .password: .sshPassword
@@ -76,6 +77,7 @@ extension ConnectionWorkspace {
         let model = ExportSheetModel(
             profile: profile, database: database, serverInfo: server, tables: listed ?? [],
             secretStore: tools.secretStore ?? InMemorySecretStore(), tunnelLocalPort: live?.tunnel?.localPort)
+        model.sshOptions = tools.sshOptions
         if let only, !only.isEmpty { model.selectedTables = only.intersection(Set((listed ?? []).map(\.ref.name))) }
         tools.exportSheet = model
         await model.load(inspector: browser.inspector)

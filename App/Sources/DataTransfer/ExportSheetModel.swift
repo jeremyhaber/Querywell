@@ -54,6 +54,8 @@ final class ExportSheetModel {
     /// Finds the local dump tools (tests inject fixed ones).
     @ObservationIgnored var toolLocator: @Sendable () async -> [ToolInfo] = { await DumpToolLocator().locate() }
     @ObservationIgnored var now: @Sendable () -> Date = { Date() }
+    /// How ssh is invoked (tests point it at a throw-away known_hosts).
+    @ObservationIgnored var sshOptions = SSHClientOptions()
     @ObservationIgnored var downloadsDirectory = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         ?? URL(fileURLWithPath: NSHomeDirectory())
     @ObservationIgnored private let dbPassword: String?
@@ -255,7 +257,7 @@ final class ExportSheetModel {
         do {
             // Local exports need the tool selection even before discovery finished: show the plan error instead.
             let selection: ToolSelection? = location == .localThroughTunnel ? (toolSelection ?? DumpToolSelector.select(for: serverInfo, from: [])) : nil
-            let p = try ExportPlanner.plan(target: target, options: exportOptions, tool: selection, sshHasSecret: hasSSHSecret, now: now())
+            let p = try ExportPlanner.plan(target: target, options: exportOptions, tool: selection, sshOptions: sshOptions, sshHasSecret: hasSSHSecret, now: now())
             plan = p
             planError = nil
             if !destinationChosen {
@@ -333,6 +335,15 @@ final class ExportSheetModel {
 
     /// Stops the export; the partial file is deleted by the runner.
     func cancel() { runTask?.cancel() }
+
+    /// Shows a run in progress without running anything (snapshots).
+    func previewRunning(_ progress: Progress, startedAgo: TimeInterval = 12) {
+        runState = .running
+        self.progress = progress
+        startedAt = Date().addingTimeInterval(-startedAgo)
+    }
+
+    func endPreview() { runState = .idle }
 
     func resetAfterRun() {
         if !isRunning { runState = .idle }

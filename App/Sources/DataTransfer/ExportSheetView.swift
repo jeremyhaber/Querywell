@@ -28,10 +28,14 @@ struct ExportSheetView: View {
                     if showTables { tableList }
                     commandPreview
                     notes
-                    runStatus
                 }
                 .padding(.horizontal, 24).padding(.vertical, 18)
                 .disabled(model.isRunning)
+            }
+            if model.runState != .idle {
+                runStatus
+                    .padding(.horizontal, 24).padding(.vertical, 12)
+                    .overlay(alignment: .top) { Theme.separator.frame(height: 1) }
             }
             footer
         }

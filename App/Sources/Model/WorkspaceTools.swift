@@ -14,6 +14,8 @@ final class WorkspaceTools {
     /// Console preferences, kept current by the window.
     var consoleSettings = AppSettings.Console()
     @ObservationIgnored var secretStore: (any SecretStore)?
+    /// ssh client options for the terminal and remote exports (tests use a throw-away known_hosts).
+    @ObservationIgnored var sshOptions = SSHClientOptions()
     @ObservationIgnored var consoleModels: [UUID: ConsoleTabModel] = [:]
     @ObservationIgnored var terminalModels: [UUID: TerminalTabModel] = [:]
 

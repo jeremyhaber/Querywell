@@ -20,6 +20,7 @@ struct TerminalTabView: View {
                     TerminalUnavailableView(reason: reason, workspace: workspace)
                 } else {
                     TerminalHost(view: model.terminalView, generation: model.generation)
+                        .padding(.leading, 12).padding(.top, 6)
                         .background(ConsoleTheme.background)
                     if case .exited(let code) = model.state { endedBanner(code) }
                 }

@@ -118,9 +118,9 @@ struct ImportSheetView: View {
                 SectionLabel(model.engine == .postgresql ? "Target schema" : "Target database")
                 Picker("Target", selection: $model.targetSchema) {
                     Text("As specified in the file").tag(String?.none)
-                    ForEach(model.schemas, id: \.self) { Text($0).tag(String?.some($0)) }
+                    ForEach(pickerSchemas, id: \.self) { Text($0).tag(String?.some($0)) }
                 }
-                .labelsHidden().frame(width: 280)
+                .labelsHidden().frame(width: 280, alignment: .leading)
                 Text("Statements run in this \(model.engine == .postgresql ? "schema" : "database"). Dumps that name their own database switch to it themselves.")
                     .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
             }
@@ -131,6 +131,7 @@ struct ImportSheetView: View {
                         Picker("Fix collations", selection: $model.collationChoice) {
                             Text("Don't change").tag(ImportSheetModel.CollationChoice.none)
                             if let name = model.suggestedName { Text("Suggested: \(name)").tag(ImportSheetModel.CollationChoice.suggested) }
+                            else if model.collationChoice == .suggested { Text("Suggested").tag(ImportSheetModel.CollationChoice.suggested) }
                             Text("MySQL 5.7 & MariaDB compatible").tag(ImportSheetModel.CollationChoice.mysql57)
                             Text("Legacy utf8mb4_unicode_ci").tag(ImportSheetModel.CollationChoice.legacy)
                             Text("Custom…").tag(ImportSheetModel.CollationChoice.custom)
@@ -155,6 +156,12 @@ struct ImportSheetView: View {
                 AmberNote(text: "This is a production database. Importing can replace tables; you will be asked to type the database name.", systemImage: "lock.fill")
             }
         }
+    }
+
+    /// The known schemas, plus the current target when the sidebar hasn't listed it (yet).
+    private var pickerSchemas: [String] {
+        guard let target = model.targetSchema, !model.schemas.contains(target) else { return model.schemas }
+        return [target] + model.schemas
     }
 
     // MARK: Running
