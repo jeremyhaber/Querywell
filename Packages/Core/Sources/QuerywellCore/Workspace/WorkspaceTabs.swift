@@ -18,13 +18,14 @@ public struct WorkspaceTab: Identifiable, Hashable, Sendable, Codable {
         case query(number: Int)
         case console
         case terminal
+        case health
 
         /// Dot colour role for this kind.
         public var accent: TabAccent {
             switch self {
             case .table: .table
             case .query: .query
-            case .console, .terminal: .console
+            case .console, .terminal, .health: .console
             }
         }
     }
@@ -126,6 +127,12 @@ public struct WorkspaceTabs: Hashable, Sendable, Codable {
     @discardableResult
     public mutating func openTerminal() -> WorkspaceTab.ID {
         open(kind: .terminal, title: "Terminal", reuseExisting: false)
+    }
+
+    /// Selects the Database Health & Doctor tab, creating it if there is none (at most one).
+    @discardableResult
+    public mutating func openHealth() -> WorkspaceTab.ID {
+        open(kind: .health, title: "Health", reuseExisting: true)
     }
 
     private mutating func open(kind: WorkspaceTab.Kind, title: String, reuseExisting: Bool) -> WorkspaceTab.ID {
