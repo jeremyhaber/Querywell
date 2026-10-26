@@ -30,16 +30,27 @@ public actor MySQLSession: DatabaseSession {
     private let host: String
     private let port: Int
     private let logger: Logger
+    private let configuration: ConnectionConfiguration
+    /// `CONNECTION_ID()` of this session, the target of `KILL QUERY`.
+    private let connectionID: Int64?
     private var gate = SerialGate()
     private var closed = false
+    private var statementCounter = 0
+    /// The statement currently on the wire (guards cancellation against hitting a later one).
+    private var runningStatement: Int?
 
-    private init(connection: MySQLConnection, serverInfo: ServerInfo, host: String, port: Int, logger: Logger) {
+    private init(
+        connection: MySQLConnection, serverInfo: ServerInfo, host: String, port: Int, logger: Logger,
+        configuration: ConnectionConfiguration, connectionID: Int64?
+    ) {
         self.connection = connection
         self.serverInfo = serverInfo
         self.engine = serverInfo.engine
         self.host = host
         self.port = port
         self.logger = logger
+        self.configuration = configuration
+        self.connectionID = connectionID
     }
 
     deinit {
@@ -70,9 +81,20 @@ public actor MySQLSession: DatabaseSession {
         do {
             let info = try await probeServer(connection, config: config, plan: plan, logger: logger)
             try await normalizeSQLMode(connection, config: config)
+            var connectionID: Int64?
+            if let out = try? await runWire(connection, "SELECT CONNECTION_ID()", host: config.host, port: config.port),
+               let cell = out.rows.first?.first, let meta = out.columns.first {
+                switch MySQLValueMapping.value(cell, column: meta) {
+                case .integer(let v): connectionID = v
+                case .unsignedInteger(let v): connectionID = Int64(exactly: v)
+                case .text(let t): connectionID = Int64(t)
+                default: break
+                }
+            }
             return MySQLSession(
                 connection: connection, serverInfo: info,
-                host: config.host, port: config.port, logger: logger
+                host: config.host, port: config.port, logger: logger,
+                configuration: config, connectionID: connectionID
             )
         } catch {
             try? await connection.close().get()
@@ -198,9 +220,48 @@ public actor MySQLSession: DatabaseSession {
     }
 
     public func execute(_ sql: String) async throws -> QueryResult {
+        try await execute(sql, interruptible: false)
+    }
+
+    public func execute(_ sql: String, interruptible: Bool) async throws -> QueryResult {
         try await acquire()
         defer { gate.leave() }
-        return try await runLocked(sql)
+        if interruptible { try Task.checkCancellation() }
+        statementCounter += 1
+        let id = statementCounter
+        runningStatement = id
+        defer { if runningStatement == id { runningStatement = nil } }
+        guard interruptible else { return try await runLocked(sql) }
+        do {
+            return try await withTaskCancellationHandler {
+                try await runLocked(sql)
+            } onCancel: {
+                Task { await self.abortStatement(id) }
+            }
+        } catch let error as DatabaseError where error.isCancelled && Task.isCancelled {
+            throw CancellationError()
+        }
+    }
+
+    public func cancelCurrentQuery() async throws {
+        guard let id = runningStatement else { return }
+        await abortStatement(id)
+    }
+
+    /// `KILL QUERY` from a second connection, repeated until `id` is no longer running: the first kill can
+    /// reach the server before it has started the statement, in which case it does nothing.
+    private func abortStatement(_ id: Int) async {
+        guard let connectionID, runningStatement == id else { return }
+        var config = configuration
+        config.connectTimeout = .seconds(5)
+        guard let killer = try? await MySQLSession.open(config) else { return }
+        var attempts = 0
+        while runningStatement == id, attempts < 40 {
+            _ = try? await killer.execute("KILL QUERY \(connectionID)")
+            attempts += 1
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        await killer.close()
     }
 
     private func runLocked(_ sql: String) async throws -> QueryResult {

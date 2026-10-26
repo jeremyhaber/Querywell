@@ -229,7 +229,7 @@ public struct QueryRunner: Sendable {
     private func runOne(_ statement: ClassifiedStatement, on session: any DatabaseSession, clock: ContinuousClock) async -> StatementResult {
         let began = clock.now
         do {
-            var result = try await session.execute(statement.text)
+            var result = try await session.execute(statement.text, interruptible: true)
             let elapsed = clock.now - began
             if !result.columns.isEmpty {
                 let total = result.rows.count
@@ -250,6 +250,11 @@ public struct QueryRunner: Sendable {
             if let id = result.lastInsertID, id > 0 { line += ", last insert ID \(id)" }
             return StatementResult(statement: statement, outcome: .affected(rowsAffected: affected, lastInsertID: result.lastInsertID),
                                    duration: elapsed, messages: [line], isTruncated: false, totalRows: nil)
+        } catch is CancellationError {
+            // Stop pressed while this statement ran: the server was asked to abort it.
+            let elapsed = clock.now - began
+            return StatementResult(statement: statement, outcome: .skipped, duration: elapsed,
+                                   messages: ["Cancelled after \(Self.format(elapsed))"], isTruncated: false, totalRows: nil)
         } catch {
             let elapsed = clock.now - began
             let dbError = (error as? DatabaseError) ?? .query(message: String(describing: error), code: nil)

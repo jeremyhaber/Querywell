@@ -150,6 +150,24 @@ public enum DatabaseError: Error, Sendable, Equatable {
     case unsupported(String)
 }
 
+extension DatabaseError {
+    /// The server aborted the statement because it was asked to (MySQL/MariaDB 1317 after `KILL QUERY`,
+    /// Postgres 57014 after `pg_cancel_backend`) rather than because of a time limit.
+    public var isCancelled: Bool {
+        guard case .query(let message, let code) = self else { return false }
+        if code == "1317" { return true }
+        return code == "57014" && !message.contains("statement timeout")
+    }
+
+    /// The statement hit a server-side time limit (MySQL `MAX_EXECUTION_TIME` 3024, MariaDB
+    /// `max_statement_time` 1969, Postgres `statement_timeout`).
+    public var isTimeout: Bool {
+        guard case .query(let message, let code) = self else { return false }
+        if code == "3024" || code == "1969" { return true }
+        return code == "57014" && message.contains("statement timeout")
+    }
+}
+
 /// An open connection to one server. Implementations are actors; calls are serialized
 /// per session (one in-flight statement, like a single client connection).
 public protocol DatabaseSession: AnyObject, Sendable {
@@ -167,6 +185,22 @@ public protocol DatabaseSession: AnyObject, Sendable {
 
     /// Closes the connection. Further calls throw ``DatabaseError/sessionClosed``. Idempotent.
     func close() async
+
+    /// Like ``execute(_:)``, but cancelling the calling task aborts the statement on the server (MySQL:
+    /// `KILL QUERY` over a second short-lived connection; Postgres: `pg_cancel_backend`). Only the
+    /// statement this call started is ever aborted, never a later one. A cancelled task gets
+    /// `CancellationError`. The default runs a plain `execute` (sessions that can't abort).
+    func execute(_ sql: String, interruptible: Bool) async throws -> QueryResult
+
+    /// Aborts whatever statement is running right now (the Stop button), via a second short-lived
+    /// connection built from the session's own configuration. The aborted `execute` throws a
+    /// ``DatabaseError`` with ``DatabaseError/isCancelled``. A no-op when idle.
+    func cancelCurrentQuery() async throws
+}
+
+extension DatabaseSession {
+    public func execute(_ sql: String, interruptible: Bool) async throws -> QueryResult { try await execute(sql) }
+    public func cancelCurrentQuery() async throws { throw DatabaseError.unsupported("This session can't cancel a running statement.") }
 }
 
 /// Opens sessions for one engine family. Stateless; safe to share.

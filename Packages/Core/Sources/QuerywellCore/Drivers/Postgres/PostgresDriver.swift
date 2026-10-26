@@ -38,13 +38,20 @@ public actor PostgresSession: DatabaseSession {
     private let port: Int
     private let logger: Logger
     private var decoder: PostgresValueDecoder
+    private let configuration: ConnectionConfiguration
+    /// `pg_backend_pid()` of this session, the target of `pg_cancel_backend`.
+    private let backendPID: Int64?
     private var gate = SerialGate()
     private var closed = false
+    private var statementCounter = 0
+    private var runningStatement: Int?
 
     private init(
         connection: PostgresConnection, serverInfo: ServerInfo, decoder: PostgresValueDecoder,
-        host: String, port: Int, logger: Logger
+        host: String, port: Int, logger: Logger, configuration: ConnectionConfiguration, backendPID: Int64?
     ) {
+        self.configuration = configuration
+        self.backendPID = backendPID
         self.connection = connection
         self.serverInfo = serverInfo
         self.decoder = decoder
@@ -109,9 +116,15 @@ public actor PostgresSession: DatabaseSession {
 
         do {
             let probe = try await probeServer(connection, config: config, plan: plan, logger: logger)
+            var pid: Int64?
+            if let raw = try? await runRaw(connection, "SELECT pg_backend_pid()::int8", logger: logger, host: config.host, port: config.port),
+               let cell = raw.rows.first.flatMap({ Array($0).first }),
+               case .integer(let value) = probe.decoder.value(cell.bytes, oid: cell.dataType.rawValue) {
+                pid = value
+            }
             return PostgresSession(
                 connection: connection, serverInfo: probe.info, decoder: probe.decoder,
-                host: config.host, port: config.port, logger: logger
+                host: config.host, port: config.port, logger: logger, configuration: config, backendPID: pid
             )
         } catch {
             try? await connection.close()
@@ -207,9 +220,48 @@ public actor PostgresSession: DatabaseSession {
     }
 
     public func execute(_ sql: String) async throws -> QueryResult {
+        try await execute(sql, interruptible: false)
+    }
+
+    public func execute(_ sql: String, interruptible: Bool) async throws -> QueryResult {
         try await acquire()
         defer { gate.leave() }
-        return try await runLocked(sql)
+        if interruptible { try Task.checkCancellation() }
+        statementCounter += 1
+        let id = statementCounter
+        runningStatement = id
+        defer { if runningStatement == id { runningStatement = nil } }
+        guard interruptible else { return try await runLocked(sql) }
+        do {
+            return try await withTaskCancellationHandler {
+                try await runLocked(sql)
+            } onCancel: {
+                Task { await self.abortStatement(id) }
+            }
+        } catch let error as DatabaseError where error.isCancelled && Task.isCancelled {
+            throw CancellationError()
+        }
+    }
+
+    public func cancelCurrentQuery() async throws {
+        guard let id = runningStatement else { return }
+        await abortStatement(id)
+    }
+
+    /// `pg_cancel_backend` from a second connection, repeated until `id` is no longer running (a cancel
+    /// that arrives before the server starts the statement is lost).
+    private func abortStatement(_ id: Int) async {
+        guard let backendPID, runningStatement == id else { return }
+        var config = configuration
+        config.connectTimeout = .seconds(5)
+        guard let killer = try? await PostgresSession.open(config) else { return }
+        var attempts = 0
+        while runningStatement == id, attempts < 40 {
+            _ = try? await killer.execute("SELECT pg_cancel_backend(\(backendPID))")
+            attempts += 1
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        await killer.close()
     }
 
     private func runLocked(_ sql: String) async throws -> QueryResult {

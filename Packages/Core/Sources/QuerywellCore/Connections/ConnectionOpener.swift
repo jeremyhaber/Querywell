@@ -76,7 +76,12 @@ public struct ConnectionOpener: Sendable {
         switch outcome {
         case .session(let session):
             progress?(.connected)
-            return LiveConnection(profile: profile, session: session, tunnel: tunnel)
+            var auxiliary = configuration
+            auxiliary.connectTimeout = .seconds(10)
+            let auxiliaryConfiguration = auxiliary
+            return LiveConnection(
+                profile: profile, session: session, tunnel: tunnel,
+                auxiliaryOpener: { try await driver.connect(auxiliaryConfiguration) })
         case .forwardFailure(let reason):
             await tunnel?.close()
             throw ConnectionOpenError.databaseUnreachableThroughTunnel(
