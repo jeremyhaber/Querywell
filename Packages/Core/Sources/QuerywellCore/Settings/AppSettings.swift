@@ -25,6 +25,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
     public var editor: Editor
     public var dataGrid: DataGrid
     public var ai: AI
+    public var historyRetention: HistoryRetention
 
     public init(
         schemaVersion: Int = AppSettings.currentSchemaVersion,
@@ -32,7 +33,8 @@ public struct AppSettings: Codable, Sendable, Equatable {
         safety: Safety = Safety(),
         editor: Editor = Editor(),
         dataGrid: DataGrid = DataGrid(),
-        ai: AI = AI()
+        ai: AI = AI(),
+        historyRetention: HistoryRetention = HistoryRetention()
     ) {
         self.schemaVersion = schemaVersion
         self.general = general
@@ -40,6 +42,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         self.editor = editor
         self.dataGrid = dataGrid
         self.ai = ai
+        self.historyRetention = historyRetention
     }
 
     public struct General: Codable, Sendable, Equatable {
@@ -175,7 +178,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         }
     }
 
-    private enum CodingKeys: String, CodingKey { case schemaVersion, general, safety, editor, dataGrid, ai }
+    private enum CodingKeys: String, CodingKey { case schemaVersion, general, safety, editor, dataGrid, ai, historyRetention }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -185,6 +188,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
         editor = c.value(.editor, Editor())
         dataGrid = c.value(.dataGrid, DataGrid())
         ai = c.value(.ai, AI())
+        historyRetention = c.value(.historyRetention, HistoryRetention())
     }
 }
 
