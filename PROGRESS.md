@@ -54,6 +54,19 @@
 
 **Decided:** #29–33.
 
+## Phase 6 — Data editors ✅ (2026-10-26)
+- Core: PHP serialized parser/serializer (byte-exact round trip, verified against PHP 8.3-generated fixtures; repair proposals), JSON document (order/number-preserving, original-formatting save), `SafeReplacer` (serialized/JSON/nested, `\/`-escaped URLs), `DatabaseSearchReplace` (dry run, per-table transactions, optimistic writes, invalid-serialized report).
+- App: value editor (JSON tree/raw with line:col errors; PHP tree with read-only custom objects/references; explicit repair with diff); Search & Replace sheet (⇧⌘H) with preview samples, WordPress defaults (guid skipped), PROD typed-name confirmation. Saving editors creates pending edits (normal Review flow).
+
+## Phase 7 — Console, terminal, import/export ✅ (2026-10-26)
+- Core: console formatting/input (mysql-style ASCII tables, `\G`, continuation), SSH terminal command, dump tool discovery + version checks, export planner (remote over SSH with password only in a trap-removed temp file; per-table structure/data modes split across up to 3 mysqldump runs; transients excluded via separate `--where` run; collation rewrite stage), streaming gzip, import runner (streaming splitter, collation pre-scan + mapping, stop/continue on error), result exporter (CSV/JSON/SQL INSERT), automatic table clustering + generic "structure only" suggestions + per-connection export rules.
+- App: SQL console tab, SSH terminal tab (SwiftTerm 1.11.2), export dialog per design with table selection (groups by prefix, presets, rule chips, suggestions, live size), progress/cancel, import (menu + drag & drop) with scan/mapping/confirmation, result & table export.
+- End-to-end: export over SSH bastion → import into fresh schema → row counts match.
+
+**Status after 1–7:** CI PASS (0 warnings), Core ~1,100 tests incl. Docker integration on MySQL 8.4 / MariaDB 11.4 / Postgres 16, App unit + snapshot suites.
+
+**Known follow-ups for Phase 8:** UI snapshots only exercise MySQL (Postgres/MariaDB UI paths need end-to-end coverage); databases with two WordPress prefixes pick one for transient skipping; Xcode rewrites `Packages/Core/Package.resolved` with SwiftTerm pins; 1M-row performance unmeasured; SwiftTerm pinned to 1.11.2 (newer needs Metal toolchain / plugin validation).
+
 ## Scope additions (requested by Jeremy, 2026-10-26)
 
 ### A. Collation / charset compatibility on export (and import) — Phase 7
