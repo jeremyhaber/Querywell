@@ -1,39 +1,140 @@
-import SwiftUI
+import AppKit
 import QuerywellCore
+import SwiftUI
 
 @main
 struct QuerywellApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @State private var model: AppModel
+
+    init() {
+        let model = AppModel.live()
+        _model = State(initialValue: model)
+        AppDelegate.model = model
+    }
+
     var body: some Scene {
-        WindowGroup("Connections") {
+        // The launcher is declared first so it is the window that opens at launch.
+        Window("Connections", id: "launcher") {
             LauncherView()
+                .environment(model)
+                .frame(minWidth: 760, minHeight: 480)
+                .task { await model.load() }
         }
+        .defaultSize(width: 980, height: 660)
+        .commands { AppCommands(model: model) }
+
+        // The value is a workspace id, not a profile id: one profile can have two windows.
+        WindowGroup("Connection", id: "connection", for: UUID.self) { $workspaceID in
+            ConnectionWindowView(workspaceID: workspaceID)
+                .environment(model)
+                .frame(minWidth: 820, minHeight: 520)
+                .task { await model.load() }
+        }
+        .defaultSize(width: 1240, height: 800)
+        .windowToolbarStyle(.unified(showsTitle: false))
 
         Settings {
-            SettingsPlaceholderView()
+            SettingsView()
+                .environment(model)
         }
     }
 }
 
-struct LauncherView: View {
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Querywell")
-                .font(.largeTitle.bold())
-            Text("Supported engines")
-                .font(.headline)
-            List(DatabaseEngine.allCases, id: \.self) { engine in
-                Text(engine.displayName)
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var model: AppModel?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Tabs live inside connection windows (DECISIONS #24), never as NSWindow tabs.
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
+
+    /// Close every live connection before quitting so no ssh process is left behind. Capped at
+    /// about three seconds so a hung server can't block quitting.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model = Self.model, !model.workspaces.isEmpty else { return .terminateNow }
+        var replied = false
+        let reply: @MainActor () -> Void = {
+            guard !replied else { return }
+            replied = true
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+        Task {
+            await model.closeAllWorkspaces()
+            reply()
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            reply()
+        }
+        return .terminateLater
+    }
+}
+
+/// Menu bar commands. Window-specific ones act through the focused window's `WindowActions`.
+struct AppCommands: Commands {
+    let model: AppModel
+    @FocusedValue(\.windowActions) private var actions
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Connection…") {
+                model.wantsNewConnection = true
+                openWindow(id: "launcher")
+            }
+            .keyboardShortcut("n")
+        }
+
+        CommandGroup(replacing: .saveItem) {
+            Button(actions?.closeLabel ?? "Close Window") {
+                if let actions {
+                    actions.closeTab()
+                } else {
+                    NSApp.keyWindow?.performClose(nil)
+                }
+            }
+            .keyboardShortcut("w")
+        }
+
+        CommandGroup(after: .windowArrangement) {
+            Divider()
+            Button("Connections") { openWindow(id: "launcher") }
+                .keyboardShortcut("0")
+        }
+
+        CommandMenu("Go") {
+            Button("Quick Open…") { actions?.quickOpen() }
+                .keyboardShortcut("k")
+                .disabled(actions == nil)
+        }
+
+        CommandMenu("Tab") {
+            Button("New Query") { actions?.newQuery?() }
+                .keyboardShortcut("t")
+                .disabled(actions?.newQuery == nil)
+            Divider()
+            Button("Next Tab") { actions?.nextTab?() }
+                .keyboardShortcut(.tab, modifiers: .control)
+                .disabled(actions?.nextTab == nil)
+            Button("Previous Tab") { actions?.previousTab?() }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                .disabled(actions?.previousTab == nil)
+            Divider()
+            ForEach(1...9, id: \.self) { number in
+                Button("Tab \(number)") { actions?.selectTab?(number - 1) }
+                    .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
+                    .disabled(actions?.selectTab == nil)
             }
         }
-        .padding()
-        .frame(minWidth: 420, minHeight: 320)
-    }
-}
 
-struct SettingsPlaceholderView: View {
-    var body: some View {
-        Text("Settings coming soon")
-            .padding()
-            .frame(width: 360, height: 160)
+        #if DEBUG
+        CommandMenu("Debug") {
+            Button("Add Docker test connections") {
+                Task { await model.addDockerTestConnections() }
+            }
+        }
+        #endif
     }
 }
