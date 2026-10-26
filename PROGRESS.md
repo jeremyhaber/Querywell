@@ -124,3 +124,13 @@ Per-table Structure / Data (default both) without checkbox fatigue: rows grouped
 **Bugs found and fixed:** Postgres export dumped every schema in the database (now `--schema` + qualified patterns); Postgres import failed on `SET transaction_timeout` from a PG18 pg_dump into PG16 (unknown settings are skipped); MariaDB `JSON` columns were typed longtext (detected via `json_valid` CHECK); export grouping/prefix choice with two WordPress installs; query-tab Stop only worked between statements. Postgres import cannot rename the schema inside a pg_dump stream, so the end-to-end test renames the original away first (the sheet's "target schema" applies to MySQL/MariaDB dumps).
 
 **Left:** drivers still buffer whole result sets (200k rows ≈ 350 MB); Postgres import into a differently named schema; numbers are Debug builds.
+
+## Phase 8C — dark mode and accessibility audit ✅ (2026-10-26)
+
+- **Contrast:** `ContrastTests` (about 700 pairings x 4 appearances) found and fixed: textTertiary/syntaxComment on chrome and sidebar (4.25 to 4.70), editor line numbers (3.09 to 4.6+ on the current line), console muted on segment track (4.30 to 4.70), separatorStrong (1.77 to 3.1+), selected card border (2.03 to 3.73), pending edit bar (2.62 to 3.1+), pending pill border (1.83 to 3.35), Staging tag (2.18 to 3.25), dark accent as a boundary on elevated (2.98 to 3.01), white on the destructive button in dark (2.28 to 5.4, new `dangerFill`), dark textTertiary on elevated (4.43 to 4.7). Increase Contrast variants added.
+- **Dark audit:** all 54 screens reviewed light vs dark; one defect, the SQL autocomplete list rendering light in dark windows (child panel appearance), fixed. No hard-coded white backgrounds found; literal colours exist only for white-on-fill text and the always-dark export command box.
+- **VoiceOver:** existing labels were already complete (source lint finds no unlabeled icon-only control); added the WHERE suggestion list role/rows/selection, spoken announcements for long operations, saved-query SQL label.
+- **Keyboard:** tabs are focus stops; README shortcut tables rewritten per area.
+- **Reduce Motion:** `Motion` helpers applied to every `withAnimation` / `.animation`.
+- **Left:** the grid's funnel button is still pointer-only (⌥⌘F opens it from the keyboard); Increase Contrast was verified by test switch, not on a Mac with the setting on; no VoiceOver listening pass.
+- Decided: #66-72.

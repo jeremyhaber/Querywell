@@ -138,31 +138,90 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the layout and rules, and [DECISIONS.
 
 ## Keyboard shortcuts
 
+Everything is reachable without a mouse. With System Settings > Keyboard > "Keyboard navigation" (Full Keyboard Access) on, `⇥` also visits segmented controls, filter-chip remove buttons, tab close buttons and the tabs themselves (`Space` / `↩` selects a focused tab).
+
+**Anywhere**
+
 | Shortcut | Action |
 |---|---|
 | `⌘N` | New connection |
 | `⌘0` | Connections launcher |
-| `⌘F` (launcher) | Find connections |
-| `⌘K` | Quick open |
-| `⌘T` | New query tab |
+| `⌘K` | Quick open (tables, saved queries, tabs, connections) |
+| `⌘,` | Settings |
 | `⌘W` | Close tab / window |
+| `⇧⌘E` / `⇧⌘I` | Export database / Import SQL |
+| `⇧⌘H` | Search and replace |
+| `⎋` | Cancel a sheet, close a popover (focus returns to where it came from) |
+| `↩` | The sheet's default button |
+
+**Launcher**
+
+| Shortcut | Action |
+|---|---|
+| `⌘F` | Find connections |
+| `←` `→` `↑` `↓` | Move between connection cards |
+| `↩` / `⌥↩` | Connect / connect in a new window |
+| `⌘E` | Edit the selected connection |
+| `⌘⌫` | Delete the selected connection (asks first) |
+
+**Connection editor sheet**
+
+| Shortcut | Action |
+|---|---|
+| `⇥` / `⇧⇥` | Next / previous field (top to bottom) |
+| `⌘S` | Save |
+| `⎋` | Cancel |
+
+**Connection window**
+
+| Shortcut | Action |
+|---|---|
+| `⌘T` | New query tab |
 | `⌘1` ... `⌘9` | Select tab |
 | `⌃⇥` / `⌃⇧⇥` | Next / previous tab |
-| `⌘F` (sidebar) | Filter tables |
+| `⌘F` | Filter tables in the sidebar |
 | `⌘R` | Refresh schema |
-| `⌘L` | Focus WHERE bar |
-| `⌥⌘G` | Focus grid |
-| `⌥⌘I` | Toggle row inspector |
+| `⌘L` | Focus the WHERE bar |
+| `⌥⌘F` | Open the funnel of the active column |
+| `⌥⌘G` | Focus the grid |
+| `⌥⌘I` | Toggle the row inspector |
 | `⌥⌘N` | Add row |
-| `⌘S` | Review pending changes / save query |
+| `⌘S` | Review pending changes |
+
+**Data grid**
+
+| Shortcut | Action |
+|---|---|
+| Arrow keys | Move the active cell |
+| `↩` | Edit the cell |
+| `⇥` / `⇧⇥` (while editing) | Commit and move right / left |
+| `⎋` | Cancel the edit |
+
+**Query editor**
+
+| Shortcut | Action |
+|---|---|
 | `⌘↵` | Run selection or all statements |
 | `⇧⌘↵` | Run statement at the cursor |
 | `⌘E` | Explain |
 | `⌥⌘F` | Format SQL |
-| `⇧⌘A` | Toggle AI assistant |
-| `⇧⌘H` | Search and replace |
-| `⇧⌘E` / `⇧⌘I` | Export database / Import SQL |
-| `⇧⌘G` | Console: open result in a grid |
+| `⌘S` | Save query |
+| `⇧⌘A` | Toggle the AI assistant |
+| `⇥` / `↩` | Accept the highlighted completion (`↑` `↓` choose, `⎋` dismisses) |
+
+**Console**
+
+| Shortcut | Action |
+|---|---|
+| `↑` / `↓` | History |
+| `⇥` | Autocomplete |
+| `⇧⌘G` | Open result in a grid |
+
+## Accessibility
+
+- **VoiceOver:** every control is labelled (icon-only buttons included), tabs report "tab N of M" and unsaved state, connection cards offer Connect / Connect in New Window / Edit actions, grid cells are `cell`s read with their column, the production badge is announced as "Production connection", and long operations (query finished, export, import, search and replace, batch operations, commit) are announced.
+- **Contrast:** every text and UI colour pair is tested against WCAG (4.5:1 text, 3:1 non-text) in light, dark and both Increase Contrast variants (`scripts/contrast.sh`). Increase Contrast strengthens separators, text and subtle backgrounds.
+- **Reduce Motion** turns off the app's own animations; the editor font size in Settings (SQL editor and its gutter, line spacing scales with it) is the only text-size control, the grid keeps its fixed 12/13 pt type (macOS has no Dynamic Type).
 
 ## Known limitations
 
