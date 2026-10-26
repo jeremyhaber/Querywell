@@ -19,7 +19,7 @@ struct WorkspaceTabsTests {
 
     @Test func retargetTableFollowsRenameAndMove() {
         var t = WorkspaceTabs()
-        let a = t.openTable(database: "app", name: "users")
+        let a = t.openTable(database: "app", name: "users").id
         let q = t.newQuery()
         t.retargetTable(id: a, database: "archive", name: "users_old")
         #expect(t.tab(id: a)?.kind == .table(database: "archive", name: "users_old"))
@@ -27,7 +27,7 @@ struct WorkspaceTabsTests {
         t.retargetTable(id: q, database: "x", name: "y")  // only table tabs retarget
         #expect(t.tab(id: q)?.kind == .query(number: 1))
         // The renamed tab is found by its new identity, so reopening focuses it instead of duplicating.
-        #expect(t.openTable(database: "archive", name: "users_old") == a)
+        #expect(t.openTable(database: "archive", name: "users_old").id == a)
     }
 
     @Test func queryNumbersNeverReused() {
