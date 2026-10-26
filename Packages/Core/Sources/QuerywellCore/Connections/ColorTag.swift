@@ -13,6 +13,32 @@ public enum ColorTag: Codable, Sendable, Hashable {
         return false
     }
 
+    /// The built-in tags offered as presets, in display order.
+    public static let presets: [ColorTag] = [.production, .staging, .local]
+
+    /// The kind of tag, ignoring any custom name/color.
+    public var kind: ColorTagKind {
+        switch self {
+        case .production: .production
+        case .staging: .staging
+        case .local: .local
+        case .custom: .custom
+        }
+    }
+
+    /// Short uppercase badge text: "PROD", "STAGING", "LOCAL", or the custom name
+    /// uppercased and truncated to 8 characters.
+    public var shortLabel: String {
+        switch self {
+        case .production: "PROD"
+        case .staging: "STAGING"
+        case .local: "LOCAL"
+        case .custom(let name, _):
+            String(name.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().prefix(8))
+        }
+    }
+
+    /// Human-readable name, e.g. "Production" or the custom tag's name.
     public var displayName: String {
         switch self {
         case .production: "Production"
@@ -22,12 +48,12 @@ public enum ColorTag: Codable, Sendable, Hashable {
         }
     }
 
-    /// Hex color (`#RRGGBB`) to render for this tag.
+    /// Hex color (`#RRGGBB`) to render for this tag (design palette).
     public var defaultHex: String {
         switch self {
-        case .production: "#FF3B30"
-        case .staging: "#FF9F0A"
-        case .local: "#34C759"
+        case .production: "#C4314B"
+        case .staging: "#E0A030"
+        case .local: "#2E9E5B"
         case .custom(_, let hex): hex
         }
     }
@@ -61,4 +87,12 @@ public enum ColorTag: Codable, Sendable, Hashable {
             try c.encode(hex, forKey: .hex)
         }
     }
+}
+
+/// The category of a ``ColorTag`` without its custom payload; used for filtering.
+public enum ColorTagKind: String, Codable, Sendable, Hashable, CaseIterable {
+    case production
+    case staging
+    case local
+    case custom
 }

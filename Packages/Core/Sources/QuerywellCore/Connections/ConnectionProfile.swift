@@ -17,6 +17,8 @@ public struct ConnectionProfile: Codable, Sendable, Hashable, Identifiable {
     public var createdAt: Date
     public var lastUsedAt: Date?
     public var notes: String?
+    /// Whether the user starred this connection (shown under "Favourites" in the launcher).
+    public var favourite: Bool
 
     /// Creates a profile; `port` defaults to the engine's standard port.
     public init(
@@ -34,7 +36,8 @@ public struct ConnectionProfile: Codable, Sendable, Hashable, Identifiable {
         readOnly: Bool = false,
         createdAt: Date = Date(),
         lastUsedAt: Date? = nil,
-        notes: String? = nil
+        notes: String? = nil,
+        favourite: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -51,6 +54,7 @@ public struct ConnectionProfile: Codable, Sendable, Hashable, Identifiable {
         self.createdAt = createdAt
         self.lastUsedAt = lastUsedAt
         self.notes = notes
+        self.favourite = favourite
     }
 
     /// Tagged as production.
@@ -64,7 +68,7 @@ public struct ConnectionProfile: Codable, Sendable, Hashable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, folderID, colorTag, engine, host, port, user, defaultDatabase
-        case ssh, tls, readOnly, createdAt, lastUsedAt, notes
+        case ssh, tls, readOnly, createdAt, lastUsedAt, notes, favourite
     }
 
     /// Tolerant decoding: only `id`, `name`, `engine`, `host` and `user` are required.
@@ -86,6 +90,7 @@ public struct ConnectionProfile: Codable, Sendable, Hashable, Identifiable {
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date(timeIntervalSince1970: 0)
         lastUsedAt = try c.decodeIfPresent(Date.self, forKey: .lastUsedAt)
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        favourite = try c.decodeIfPresent(Bool.self, forKey: .favourite) ?? false
     }
 }
 

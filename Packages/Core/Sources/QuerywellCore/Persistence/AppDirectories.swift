@@ -3,6 +3,7 @@ import Foundation
 /// Locations of the app's on-disk state.
 public enum AppDirectories {
     public static let connectionsFileName = "connections.json"
+    public static let settingsFileName = "settings.json"
 
     /// `~/Library/Application Support/<appName>`, created if needed.
     public static func applicationSupport(
@@ -25,5 +26,14 @@ public enum AppDirectories {
     ) throws -> URL {
         try applicationSupport(appName: appName, fileManager: fileManager)
             .appendingPathComponent(connectionsFileName, isDirectory: false)
+    }
+
+    /// The `settings.json` location, next to `connections.json`.
+    public static func settingsFileURL(
+        appName: String = "Querywell",
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        try applicationSupport(appName: appName, fileManager: fileManager)
+            .appendingPathComponent(settingsFileName, isDirectory: false)
     }
 }
