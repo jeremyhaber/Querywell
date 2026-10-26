@@ -7,3 +7,4 @@ Packages/Core/.build
 *.xcuserstate
 xcuserdata/
 .DS_Store
+.claude/worktrees/
