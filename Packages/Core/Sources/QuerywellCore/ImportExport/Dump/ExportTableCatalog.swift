@@ -13,10 +13,12 @@ public struct TableGroup: Equatable, Sendable, Identifiable {
     /// Friendly plugin name when the catalog knows the stem ("Wordfence"); otherwise nil.
     public var friendlyName: String?
     public var tables: [String]
+    /// The WordPress prefix of a core group; set only when the database has several installations.
+    public var prefix: String? = nil
 
     public var id: String {
         switch kind {
-        case .core: "core"
+        case .core: "core" + (prefix.map { ":" + $0 } ?? "")
         case .other: "other"
         case .cluster: pattern ?? tables.first ?? "cluster"
         }
@@ -25,7 +27,7 @@ public struct TableGroup: Equatable, Sendable, Identifiable {
     /// "WordPress core", "Wordfence · wp_wf*", "wp_acmeplugin_*", "Other tables".
     public var title: String {
         switch kind {
-        case .core: "WordPress core"
+        case .core: prefix.map { "WordPress core · \($0)" } ?? "WordPress core"
         case .other: "Other tables"
         case .cluster: [friendlyName, pattern].compactMap { $0 }.joined(separator: " · ")
         }
@@ -40,12 +42,13 @@ public struct TableSuggestion: Equatable, Sendable {
 public enum ExportTableCatalog {
     // MARK: Prefix
 
-    /// The WordPress table prefix (`wp_`): the shortest `p` for which both `p`options and `p`posts exist.
-    public static func detectPrefix(in names: [String]) -> String? {
-        let set = Set(names)
-        let candidates = names.filter { $0.hasSuffix("options") }.map { String($0.dropLast("options".count)) }
-            .filter { set.contains($0 + "posts") }
-        return candidates.min { $0.count < $1.count }
+    /// The primary WordPress table prefix (`wp_`); see ``detectPrefixes(in:)``.
+    public static func detectPrefix(in names: [String]) -> String? { detectPrefixes(in: names).first }
+
+    /// Every WordPress prefix in `names` (a live `wp_` plus a staging copy `wpstg0_`): those with `options`,
+    /// `posts` and `users` tables. Most complete / shortest first.
+    public static func detectPrefixes(in names: [String]) -> [String] {
+        WordPressDetector.detectAll(tableNames: names).map(\.prefix)
     }
 
     public static let coreSuffixes: Set<String> = [
@@ -78,18 +81,46 @@ public enum ExportTableCatalog {
     /// common leading stem of two or more characters shared by two or more tables (`wfconfig`, `wfhits`, … → `wf*`).
     /// Anything still alone is "Other tables".
     public static func cluster(_ names: [String]) -> (prefix: String?, groups: [TableGroup]) {
-        let prefix = detectPrefix(in: names)
+        let result = clusterAll(names)
+        return (result.prefixes.first, result.groups)
+    }
+
+    /// Like ``cluster(_:)`` for databases with several WordPress installations: each detected prefix gets its own
+    /// core group ("WordPress core · wpstg0_" when there is more than one) and its plugin tables are clustered
+    /// under that prefix, so globs such as `wp_wf*` and `wpstg0_wf*` stay separate.
+    public static func clusterAll(_ names: [String]) -> (prefixes: [String], groups: [TableGroup]) {
+        let prefixes = detectPrefixes(in: names)
         let sorted = names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
         var groups: [TableGroup] = []
         var remaining = sorted
-        if let prefix {
-            let core = sorted.filter { isCore($0, prefix: prefix) }
+        for prefix in prefixes {
+            let core = remaining.filter { isCore($0, prefix: prefix) }
             if !core.isEmpty {
-                groups.append(TableGroup(kind: .core, pattern: nil, friendlyName: nil, tables: core))
-                remaining = sorted.filter { !core.contains($0) }
+                groups.append(TableGroup(kind: .core, pattern: nil, friendlyName: nil, tables: core, prefix: prefixes.count > 1 ? prefix : nil))
+                remaining = remaining.filter { !core.contains($0) }
             }
         }
-        let skip = prefix ?? ""
+        // Owner of a leftover table = the longest detected prefix it starts with.
+        func owner(_ name: String) -> String {
+            prefixes.filter { !$0.isEmpty && name.hasPrefix($0) }.max { $0.count < $1.count } ?? ""
+        }
+        var partitions: [String: [String]] = [:]
+        for name in remaining { partitions[prefixes.count > 1 ? owner(name) : (prefixes.first ?? ""), default: []].append(name) }
+        var clusters: [TableGroup] = []
+        var others: [String] = []
+        for (skip, members) in partitions {
+            let result = clusterPartition(members, skip: skip)
+            clusters += result.clusters
+            others += result.others
+        }
+        clusters.sort { ($0.pattern ?? "").localizedStandardCompare($1.pattern ?? "") == .orderedAscending }
+        groups += clusters
+        others.sort { $0.localizedStandardCompare($1) == .orderedAscending }
+        if !others.isEmpty { groups.append(TableGroup(kind: .other, pattern: nil, friendlyName: nil, tables: others)) }
+        return (prefixes, groups)
+    }
+
+    private static func clusterPartition(_ remaining: [String], skip: String) -> (clusters: [TableGroup], others: [String]) {
         func rest(_ name: String) -> String { name.hasPrefix(skip) ? String(name.dropFirst(skip.count)) : name }
 
         // 1. Shared leading token.
@@ -119,11 +150,7 @@ public enum ExportTableCatalog {
             clusters.append(TableGroup(kind: .cluster, pattern: "\(skip)\(stem)*", friendlyName: WordPressTableCatalog.friendlyName(forStem: stem), tables: matching))
             used.formUnion(matching)
         }
-        clusters.sort { ($0.pattern ?? "").localizedStandardCompare($1.pattern ?? "") == .orderedAscending }
-        groups += clusters
-        let others = remaining.filter { !used.contains($0) }
-        if !others.isEmpty { groups.append(TableGroup(kind: .other, pattern: nil, friendlyName: nil, tables: others)) }
-        return (prefix, groups)
+        return (clusters, remaining.filter { !used.contains($0) })
     }
 
     private static func longestCommonPrefix(_ strings: [String]) -> String {

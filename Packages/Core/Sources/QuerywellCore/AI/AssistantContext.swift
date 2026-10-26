@@ -30,25 +30,41 @@ public struct WordPressInfo: Sendable, Hashable {
 public enum WordPressDetector {
     private static let core = ["posts", "options", "postmeta", "users", "usermeta"]
 
-    /// Finds a table prefix `P` such that at least four of `Pposts / Poptions / Ppostmeta / Pusers / Pusermeta`
-    /// exist (posts and options required). Names are compared case-insensitively.
-    public static func detect(tableNames: [String]) -> WordPressInfo? {
+    /// Every WordPress table prefix in a database: `P` such that `Pposts`, `Poptions` and `Pusers` all exist
+    /// (names compared case-insensitively; an empty prefix additionally needs a meta table so a plain
+    /// `posts`/`options`/`users` app isn't mistaken for WordPress). A live site and a staging copy
+    /// (`wp_` + `wpstg0_`) yield two entries. Multisite sub-site tables (`wp_2_posts`) have no `users` of
+    /// their own and so are never separate installs. Ordered by how many core tables each has, then the
+    /// shorter prefix, then alphabetically.
+    public static func detectAll(tableNames: [String]) -> [WordPressInfo] {
         let lowered = Dictionary(tableNames.map { ($0.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
-        var best: (prefix: String, score: Int)?
+        var found: [(info: WordPressInfo, score: Int)] = []
+        var seen = Set<String>()
         for name in tableNames where name.lowercased().hasSuffix("posts") && !name.lowercased().hasSuffix("postmeta") {
             let prefix = String(name.dropLast(5))
             let lp = prefix.lowercased()
-            guard lowered[lp + "options"] != nil else { continue }
+            guard seen.insert(lp).inserted, lowered[lp + "options"] != nil, lowered[lp + "users"] != nil else { continue }
+            if lp.isEmpty, lowered["postmeta"] == nil, lowered["usermeta"] == nil { continue }
             let score = core.filter { lowered[lp + $0] != nil }.count
-            guard score >= 4 else { continue }
-            if best == nil || score > best!.score || (score == best!.score && prefix.count < best!.prefix.count) {
-                best = (prefix, score)
-            }
+            found.append((WordPressInfo(prefix: prefix, isMultisite: lowered[lp + "blogs"] != nil && lowered[lp + "site"] != nil), score))
         }
-        guard let best else { return nil }
-        let lp = best.prefix.lowercased()
-        return WordPressInfo(prefix: best.prefix, isMultisite: lowered[lp + "blogs"] != nil && lowered[lp + "site"] != nil)
+        found.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            if $0.info.prefix.count != $1.info.prefix.count { return $0.info.prefix.count < $1.info.prefix.count }
+            return $0.info.prefix < $1.info.prefix
+        }
+        return found.map(\.info)
     }
+
+    /// The tables that belong to `prefix`: those starting with it that no longer detected prefix claims
+    /// (so with `wp_` and `wp_stg_`, `wp_stg_posts` belongs to the staging copy only).
+    public static func tables(ofPrefix prefix: String, in names: [String], among installs: [WordPressInfo]) -> [String] {
+        let longer = installs.map(\.prefix).filter { $0.count > prefix.count && $0.hasPrefix(prefix) }
+        return names.filter { name in name.hasPrefix(prefix) && !longer.contains { name.hasPrefix($0) } }
+    }
+
+    /// The primary installation: the first of ``detectAll(tableNames:)``.
+    public static func detect(tableNames: [String]) -> WordPressInfo? { detectAll(tableNames: tableNames).first }
 }
 
 public struct AssistantContext: Sendable {
@@ -59,6 +75,8 @@ public struct AssistantContext: Sendable {
     /// Compact DDL-ish text of the tables, columns, keys and indexes (size-capped).
     public var schemaSummary: String
     public var wordPress: WordPressInfo?
+    /// Every detected WordPress installation in the schema (live + staging copies); `wordPress` is the first.
+    public var wordPressInstalls: [WordPressInfo]
     /// Only ever non-nil when the context was built with `allowSampleRows: true`.
     public private(set) var sampleRows: [TableRef: SampleRows]?
 
@@ -66,8 +84,10 @@ public struct AssistantContext: Sendable {
     ///   dropped no matter what was passed — the model sees schema only.
     public init(
         engine: DatabaseEngine, serverVersion: String? = nil, currentSchema: String? = nil, schemaSummary: String,
-        wordPress: WordPressInfo? = nil, allowSampleRows: Bool = false, sampleRows: [TableRef: SampleRows]? = nil
+        wordPress: WordPressInfo? = nil, wordPressInstalls: [WordPressInfo]? = nil,
+        allowSampleRows: Bool = false, sampleRows: [TableRef: SampleRows]? = nil
     ) {
+        self.wordPressInstalls = wordPressInstalls ?? wordPress.map { [$0] } ?? []
         self.engine = engine
         self.serverVersion = serverVersion
         self.currentSchema = currentSchema
@@ -85,10 +105,11 @@ public struct AssistantContext: Sendable {
         maxSchemaChars: Int = SchemaSummary.defaultCap
     ) -> AssistantContext {
         let names = structures.map(\.info.ref.name) + otherTables.map(\.ref.name)
+        let installs = WordPressDetector.detectAll(tableNames: names)
         let summary = SchemaSummary.build(structures: structures, otherTables: otherTables, currentSchema: currentSchema,
                                           focus: prompt, dialect: SQLDialect(engine), maxChars: maxSchemaChars)
         return AssistantContext(engine: engine, serverVersion: serverVersion, currentSchema: currentSchema,
-                                schemaSummary: summary, wordPress: WordPressDetector.detect(tableNames: names),
+                                schemaSummary: summary, wordPress: installs.first, wordPressInstalls: installs,
                                 allowSampleRows: allowSampleRows, sampleRows: sampleRows)
     }
 

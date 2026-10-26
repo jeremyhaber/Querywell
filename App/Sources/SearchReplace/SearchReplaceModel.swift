@@ -14,14 +14,11 @@ enum SearchReplaceMemory {
 }
 
 enum WordPressDetection {
-    /// The table prefix (`wp_`) when `names` contains the core `options`, `posts` and `users` tables.
-    static func prefix(in names: [String]) -> String? {
-        let set = Set(names)
-        let candidates = names.filter { $0.hasSuffix("options") }.map { String($0.dropLast("options".count)) }
-        return candidates
-            .filter { set.contains($0 + "posts") && set.contains($0 + "users") }
-            .min { $0.count < $1.count }
-    }
+    /// The primary table prefix (`wp_`) when `names` contains the core `options`, `posts` and `users` tables.
+    static func prefix(in names: [String]) -> String? { prefixes(in: names).first }
+
+    /// Every installation's prefix (live `wp_` plus a staging copy `wpstg0_`).
+    static func prefixes(in names: [String]) -> [String] { WordPressDetector.detectAll(tableNames: names).map(\.prefix) }
 }
 
 /// State of the Search & Replace sheet: options, table choice, the dry run and the apply run.
@@ -101,7 +98,10 @@ final class SearchReplaceModel {
     private(set) var isLoadingTables = false
     private(set) var structuresLoaded = 0
     private(set) var tablesError: String?
+    /// The WordPress installation whose tables are pre-selected (nil when the database isn't WordPress).
     private(set) var wordPressPrefix: String?
+    /// All detected installations; more than one shows a picker.
+    private(set) var wordPressInstalls: [WordPressInfo] = []
 
     // Run state.
     private(set) var stage: Stage = .configuring
@@ -159,11 +159,12 @@ final class SearchReplaceModel {
                     ineligibleReason: info.kind == .table ? nil : "Views can't be updated",
                     isNonTransactional: Self.isNonTransactional(info.engine, family: dialect.family))
             }
-            wordPressPrefix = WordPressDetection.prefix(in: infos.filter { $0.kind == .table }.map(\.ref.name))
+            wordPressInstalls = WordPressDetector.detectAll(tableNames: infos.filter { $0.kind == .table }.map(\.ref.name))
+            if !wordPressInstalls.contains(where: { $0.prefix == wordPressPrefix }) { wordPressPrefix = wordPressInstalls.first?.prefix }
             if let preselect, !preselect.isEmpty {
                 selected = Set(infos.filter { preselect.contains($0.ref.name) && $0.kind == .table }.map(\.ref))
             } else if let prefix = wordPressPrefix {
-                selected = Set(infos.filter { $0.kind == .table && $0.ref.name.hasPrefix(prefix) }.map(\.ref))
+                selected = wordPressTables(prefix: prefix)
             } else {
                 selected = selected.filter { ref in infos.contains { $0.ref == ref } }
             }
@@ -174,6 +175,20 @@ final class SearchReplaceModel {
             isLoadingTables = false
             tablesError = SchemaBrowserModel.message(error)
         }
+    }
+
+    private func wordPressTables(prefix: String) -> Set<TableRef> {
+        let names = tables.map(\.name)
+        let owned = Set(WordPressDetector.tables(ofPrefix: prefix, in: names, among: wordPressInstalls))
+        return Set(tables.filter { $0.info.kind == .table && owned.contains($0.name) && $0.ineligibleReason == nil }.map(\.id))
+    }
+
+    /// Picks which WordPress installation Search & Replace works on: selects exactly its tables.
+    func chooseWordPress(prefix: String) {
+        guard wordPressInstalls.contains(where: { $0.prefix == prefix }) else { return }
+        wordPressPrefix = prefix
+        selected = wordPressTables(prefix: prefix)
+        resetRun()
     }
 
     private func loadStructures(inspector: any SchemaInspector) async {

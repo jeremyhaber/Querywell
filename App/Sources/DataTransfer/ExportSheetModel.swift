@@ -84,7 +84,8 @@ final class ExportSheetModel {
     /// Substring or glob (`wp_wf*`) narrowing the list; bulk actions apply to what it shows.
     var filterText = ""
     var sortBySize = false
-    private(set) var prefix: String?
+    private(set) var prefixes: [String] = []
+    var prefix: String? { prefixes.first }
     private(set) var groups: [TableGroup] = []
     @ObservationIgnored var rulesStore: ExportRulesStore?
 
@@ -116,8 +117,8 @@ final class ExportSheetModel {
         self.secretStore = secretStore
         self.tunnelLocalPort = tunnelLocalPort
         location = profile.ssh != nil ? .remoteOverSSH : .localThroughTunnel
-        let clustered = ExportTableCatalog.cluster(tables.map(\.ref.name))
-        prefix = clustered.prefix
+        let clustered = ExportTableCatalog.clusterAll(tables.map(\.ref.name))
+        prefixes = clustered.prefixes
         groups = clustered.groups
         let owner = profile.id.uuidString
         dbPassword = (try? secretStore.read(SecretKey(ownerID: owner, kind: .databasePassword))) ?? nil
@@ -217,7 +218,8 @@ final class ExportSheetModel {
             tables: explicitTableList,
             skipWordPressTransients: skipTransients && supportsTransients, optionsTables: optionsTables,
             includeRoutines: includeRoutines, includeTriggers: includeTriggers, includeEvents: includeEvents,
-            collation: collationMapping, location: location, tableModes: tableModes)
+            collation: collationMapping, location: location, tableModes: tableModes,
+            schema: profile.engine == .postgresql ? allTables.first?.ref.schema : nil)
     }
 
     /// With few skipped tables the dump uses `--ignore-table`; with many, an explicit list reads better.
@@ -376,8 +378,9 @@ final class ExportSheetModel {
     // MARK: Suggestions
 
     func suggestion(for table: String) -> TableSuggestion? {
-        let isCore = groups.first { $0.kind == .core }?.tables.contains(table) ?? false
-        return ExportTableCatalog.suggestion(for: table, prefix: prefix, isCore: isCore)
+        let isCore = groups.contains { $0.kind == .core && $0.tables.contains(table) }
+        let owner = prefixes.filter { !$0.isEmpty && table.hasPrefix($0) }.max { $0.count < $1.count } ?? prefix
+        return ExportTableCatalog.suggestion(for: table, prefix: owner, isCore: isCore)
     }
 
     /// Suggested tables that aren't already at the suggested mode.

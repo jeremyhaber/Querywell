@@ -141,6 +141,15 @@ struct AssistantPromptTests {
         #expect(WordPressDetector.detect(tableNames: ["WP_Posts", "wp_OPTIONS", "wp_postmeta", "wp_users", "wp_usermeta"])?.prefix == "WP_")
         // two installs in one schema: the complete one wins
         #expect(WordPressDetector.detect(tableNames: names("a_") + ["b_posts", "b_options"])?.prefix == "a_")
+        // Live + staging copy: both are found, the more complete / shorter one is primary.
+        let both = names("wpstg0_") + names("wp_")
+        #expect(WordPressDetector.detectAll(tableNames: both).map(\.prefix) == ["wp_", "wpstg0_"])
+        #expect(WordPressDetector.detectAll(tableNames: names("wp_") + ["wp_2_posts", "wp_2_options"]).map(\.prefix) == ["wp_"])
+        #expect(WordPressDetector.detectAll(tableNames: ["posts", "options", "users"]).isEmpty)
+        let installs = WordPressDetector.detectAll(tableNames: names("wp_") + names("wp_stg_"))
+        let owned = WordPressDetector.tables(ofPrefix: "wp_", in: names("wp_") + names("wp_stg_"), among: installs)
+        #expect(owned.allSatisfy { $0.hasPrefix("wp_") && !$0.hasPrefix("wp_stg_") } && !owned.isEmpty)
+        #expect(WordPressDetector.tables(ofPrefix: "wp_stg_", in: names("wp_") + names("wp_stg_"), among: installs).allSatisfy { $0.hasPrefix("wp_stg_") })
         // multisite
         let ms = WordPressDetector.detect(tableNames: names("wp_") + ["wp_blogs", "wp_site", "wp_2_posts", "wp_2_options"])
         #expect(ms == WordPressInfo(prefix: "wp_", isMultisite: true))

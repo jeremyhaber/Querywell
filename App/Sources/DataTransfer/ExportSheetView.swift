@@ -133,7 +133,7 @@ struct ExportSheetView: View {
                 Toggle("Triggers", isOn: $model.includeTriggers)
                 Toggle("Events", isOn: $model.includeEvents)
             }
-            Toggle(model.optionsTables.first.map { "Skip transients in \($0)" } ?? "Skip transients in wp_options", isOn: $model.skipTransients)
+            Toggle(model.optionsTables.isEmpty ? "Skip transients in wp_options" : "Skip transients in \(model.optionsTables.joined(separator: " and "))", isOn: $model.skipTransients)
                 .disabled(!model.supportsTransients)
                 .help(model.supportsTransients ? "Leaves out rows whose option_name starts with _transient_ or _site_transient_."
                       : "Available when the database has a WordPress options table.")

@@ -17,9 +17,40 @@ struct ExportTableCatalogTests {
 
     @Test func detectsThePrefix() {
         #expect(ExportTableCatalog.detectPrefix(in: realistic) == "wp_")
-        #expect(ExportTableCatalog.detectPrefix(in: ["shop_options", "shop_posts", "wp_options"]) == "shop_" || ExportTableCatalog.detectPrefix(in: ["shop_options", "shop_posts", "wp_options"]) != nil)
+        // The prefix needs options + posts + users.
+        #expect(ExportTableCatalog.detectPrefix(in: ["shop_options", "shop_posts", "wp_options"]) == nil)
+        #expect(ExportTableCatalog.detectPrefix(in: ["shop_options", "shop_posts", "shop_users", "wp_options"]) == "shop_")
         #expect(ExportTableCatalog.detectPrefix(in: ["orders", "customers"]) == nil)
-        #expect(ExportTableCatalog.detectPrefix(in: ["wp_options", "wp_posts", "wp_2_options", "wp_2_posts"]) == "wp_")
+        #expect(ExportTableCatalog.detectPrefix(in: ["wp_options", "wp_posts", "wp_users", "wp_2_options", "wp_2_posts"]) == "wp_")
+    }
+
+    @Test func detectsEveryPrefixOfAnLiveAndStagingDatabase() {
+        let live = realistic
+        let staging = (wpCore + ["wfconfig", "wfhits", "actionscheduler_actions", "actionscheduler_logs", "lonely"]).map { "wpstg0_" + $0 }
+        let both = (live + staging).shuffled()
+        #expect(ExportTableCatalog.detectPrefixes(in: both) == ["wp_", "wpstg0_"])
+        let (prefixes, groups) = ExportTableCatalog.clusterAll(both)
+        #expect(prefixes == ["wp_", "wpstg0_"])
+        let cores = groups.filter { $0.kind == .core }
+        #expect(cores.map(\.title) == ["WordPress core · wp_", "WordPress core · wpstg0_"])
+        #expect(cores.allSatisfy { $0.tables.count == 12 })
+        #expect(Set(cores.map(\.id)).count == 2)
+        // Plugin clusters are per prefix, with globs that can't match the other install.
+        #expect(group(groups, "wp_wf*")?.tables.count == 10)
+        #expect(group(groups, "wpstg0_wf*")?.tables.sorted() == ["wpstg0_wfconfig", "wpstg0_wfhits"])
+        #expect(group(groups, "wpstg0_actionscheduler_*")?.tables.count == 2)
+        #expect(group(groups, "wp_actionscheduler_*")?.tables.count == 4)
+        // Every table appears exactly once.
+        let all = groups.flatMap(\.tables)
+        #expect(all.count == both.count && Set(all).count == both.count)
+        // The "core only" preset skips every plugin table of both installs.
+        let modes = ExportTablePreset.coreOnly.modes(for: groups)
+        #expect(modes["wpstg0_wfhits"] == .skip && modes["wp_wfhits"] == .skip && modes["wpstg0_posts"] == nil)
+    }
+
+    @Test func singleInstallKeepsPlainCoreTitle() {
+        let (_, groups) = ExportTableCatalog.clusterAll(realistic)
+        #expect(groups.first { $0.kind == .core }?.title == "WordPress core")
     }
 
     @Test func clustersARealisticWordPressDatabase() {
@@ -49,9 +80,9 @@ struct ExportTableCatalogTests {
     }
 
     @Test func multisiteCoreTablesStayCore() {
-        let names = ["wp_options", "wp_posts", "wp_blogs", "wp_site", "wp_sitemeta", "wp_2_options", "wp_2_posts", "wp_2_postmeta", "wp_3_comments", "wp_wfhits", "wp_wflogins"]
+        let names = ["wp_options", "wp_posts", "wp_users", "wp_blogs", "wp_site", "wp_sitemeta", "wp_2_options", "wp_2_posts", "wp_2_postmeta", "wp_3_comments", "wp_wfhits", "wp_wflogins"]
         let (_, groups) = ExportTableCatalog.cluster(names)
-        #expect(groups[0].kind == .core && groups[0].tables.count == 9)
+        #expect(groups[0].kind == .core && groups[0].tables.count == 10)
         #expect(groups[1].pattern == "wp_wf*")
     }
 

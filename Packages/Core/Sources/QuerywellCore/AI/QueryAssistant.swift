@@ -135,7 +135,17 @@ public struct QueryAssistant: Sendable {
         default: break
         }
 
-        if let wp = context.wordPress { s += "\n\n" + wordPressNotes(wp, engine: context.engine) }
+        if let wp = context.wordPress {
+            s += "\n\n" + wordPressNotes(wp, engine: context.engine)
+            let others = context.wordPressInstalls.filter { $0.prefix != wp.prefix }
+            if !others.isEmpty {
+                let list = ([wp] + others).map { "`\($0.prefix)`" }.joined(separator: ", ")
+                s += "\n- This database contains more than one WordPress installation (table prefixes \(list)), for example a "
+                    + "live site and a staging copy. The notes above use `\(wp.prefix)`; when the user mentions staging, a copy or "
+                    + "another site, use that installation's prefix instead, and when it is unclear which one they mean, say which "
+                    + "prefix your SQL uses."
+            }
+        }
 
         s += "\n\n## Schema\n" + (context.schemaSummary.isEmpty ? "(schema not available)" : context.schemaSummary)
 

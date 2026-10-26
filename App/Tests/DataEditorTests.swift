@@ -405,7 +405,9 @@ struct SearchReplaceModelTests {
     @Test func wordPressDetectionNeedsTheCoreTables() {
         #expect(WordPressDetection.prefix(in: ["wp_posts", "wp_users", "wp_options"]) == "wp_")
         #expect(WordPressDetection.prefix(in: ["site2_posts", "site2_users", "site2_options", "wp_options"]) == "site2_")
-        #expect(WordPressDetection.prefix(in: ["posts", "users", "options"]) == "")
+        #expect(WordPressDetection.prefix(in: ["posts", "users", "options", "postmeta"]) == "")
+        #expect(WordPressDetection.prefix(in: ["posts", "users", "options"]) == nil, "an unprefixed trio without a meta table is not WordPress")
+        #expect(WordPressDetection.prefixes(in: ["wp_posts", "wp_users", "wp_options", "wpstg0_posts", "wpstg0_users", "wpstg0_options"]) == ["wp_", "wpstg0_"])
         #expect(WordPressDetection.prefix(in: ["wp_options", "wp_posts"]) == nil)
     }
 }

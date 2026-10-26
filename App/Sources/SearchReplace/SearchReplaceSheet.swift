@@ -149,10 +149,27 @@ struct SearchReplaceSheet: View {
             HStack(spacing: 8) {
                 CaptionLabel("Tables").fixedSize()  // never wrap ("TABLE / S") when the WordPress badge is shown
                 if let prefix = model.wordPressPrefix {
-                    Text("WordPress (\(prefix))").font(.system(size: 10.5, weight: .medium)).lineLimit(1).fixedSize().foregroundStyle(Theme.accentSubtleText)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Theme.accentSubtleBackground, in: RoundedRectangle(cornerRadius: Theme.badgeRadius))
-                        .help("WordPress detected: its tables are pre-selected")
+                    if model.wordPressInstalls.count > 1 {
+                        Menu {
+                            ForEach(model.wordPressInstalls, id: \.prefix) { install in
+                                Button {
+                                    model.chooseWordPress(prefix: install.prefix)
+                                } label: {
+                                    Text(verbatim: install.prefix == prefix ? "✓ \(install.prefix)" : install.prefix)
+                                }
+                            }
+                        } label: {
+                            Text("WordPress (\(prefix)) ▾").font(.system(size: 10.5, weight: .medium)).lineLimit(1).fixedSize()
+                        }
+                        .menuStyle(.borderlessButton).fixedSize()
+                        .accessibilityLabel("WordPress installation")
+                        .help("This database holds \(model.wordPressInstalls.count) WordPress installations. Choose which one to search; its tables are selected.")
+                    } else {
+                        Text("WordPress (\(prefix))").font(.system(size: 10.5, weight: .medium)).lineLimit(1).fixedSize().foregroundStyle(Theme.accentSubtleText)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(Theme.accentSubtleBackground, in: RoundedRectangle(cornerRadius: Theme.badgeRadius))
+                            .help("WordPress detected: its tables are pre-selected")
+                    }
                 }
                 Text("\(model.selectedCount) of \(model.eligibleTables.count)")
                     .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
