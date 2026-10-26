@@ -95,8 +95,11 @@ struct HealthTabModelTests {
         #expect(h.model.banner?.isError == true)
         h.model.ramText = "16"
         await h.model.commitRAM()
-        #expect(h.model.inputs.serverRAMBytes == 16 * (1 << 30))
-        #expect(await h.store.data(for: h.profile.id).serverRAMBytes == 16 * (1 << 30))
+        // Typed constant: inside #expect an untyped `16 * (1 << 30)` against an `Int64?` does not compare equal
+        // even though both sides print the same value.
+        let sixteenGiB: Int64 = 16 << 30
+        #expect(h.model.inputs.serverRAMBytes == sixteenGiB)
+        #expect(await h.store.data(for: h.profile.id).serverRAMBytes == sixteenGiB)
         h.model.ramText = ""
         await h.model.commitRAM()
         #expect(h.model.inputs.serverRAMBytes == nil)
