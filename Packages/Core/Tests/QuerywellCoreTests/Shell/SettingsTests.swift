@@ -19,6 +19,7 @@ struct AppSettingsTests {
         #expect(s.schemaVersion == 1)
         #expect(s.general.reopenLastSession && s.general.confirmBeforeClosingConnectionWindow)
         #expect(s.general.openConnectionBehaviour == .focusExisting)
+        #expect(s.general.tableClickBehaviour == .preview)
         #expect(s.safety.confirmWritesOnProduction && s.safety.requireTypingDatabaseNameForDestructive)
         #expect(!s.safety.defaultReadOnlyForNewProductionConnections)
         #expect(s.editor.fontSize == 12 && s.editor.showLineNumbers)
@@ -41,6 +42,12 @@ struct AppSettingsTests {
         #expect(s.dataGrid.pageSize == 1000 && s.dataGrid.nullDisplay == "∅" && s.dataGrid.showColumnTypes)
         #expect(s.ai.provider == .anthropic && s.ai.model == "m")
         #expect(s.safety == AppSettings.Safety())
+    }
+
+    @Test func tableClickBehaviourDecodesTolerantly() throws {
+        #expect(try decode(#"{"general":{"tableClickBehaviour":"reuseExisting"}}"#).general.tableClickBehaviour == .reuseExisting)
+        #expect(try decode(#"{"general":{"tableClickBehaviour":"sideways"}}"#).general.tableClickBehaviour == .preview)
+        #expect(try decode(#"{"general":{}}"#).general.tableClickBehaviour == .preview)
     }
 
     @Test func malformedValuesFallBack() throws {
@@ -77,6 +84,7 @@ struct AppSettingsTests {
         var s = AppSettings()
         s.ai = .init(provider: .openrouter, model: "x/y", includeSampleRowsByDefault: true)
         s.general.openConnectionBehaviour = .newWindow
+        s.general.tableClickBehaviour = .newTab
         s.dataGrid.pageSize = 250
         let data = try JSONFileStore.makeEncoder().encode(s)
         #expect(try JSONFileStore.makeDecoder().decode(AppSettings.self, from: data) == s)

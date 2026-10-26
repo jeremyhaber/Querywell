@@ -10,6 +10,24 @@ public enum TabAccent: Sendable, Hashable {
     case console
 }
 
+/// A user-chosen colour for one tab (tab context menu > Color). The app maps each case to theme tokens.
+public enum TabColor: String, Codable, Sendable, Hashable, CaseIterable {
+    case red, orange, yellow, green, blue, purple
+
+    /// Menu title.
+    public var displayName: String { rawValue.capitalized }
+}
+
+/// What a single click on a table in the sidebar does (Settings > General).
+public enum TableClickBehaviour: String, Codable, Sendable, Hashable, CaseIterable {
+    /// Opens in the window's one preview tab, replacing the table shown there.
+    case preview
+    /// Always opens a new tab.
+    case newTab
+    /// Focuses the table's existing tab, else opens a new one.
+    case reuseExisting
+}
+
 /// One tab in a connection window.
 public struct WorkspaceTab: Identifiable, Hashable, Sendable, Codable {
     /// What the tab shows.
@@ -38,15 +56,39 @@ public struct WorkspaceTab: Identifiable, Hashable, Sendable, Codable {
     public var queryText: String?
     /// Query tabs opened from (or saved as) a saved query.
     public var savedQueryID: UUID?
+    /// A preview tab (italic title) that the next single-click on a table replaces. Table tabs only.
+    public var isPreview: Bool
+    /// The user's colour for this tab, if any.
+    public var color: TabColor?
 
     public init(id: UUID = UUID(), kind: Kind, title: String, isDirty: Bool = false,
-                queryText: String? = nil, savedQueryID: UUID? = nil) {
+                queryText: String? = nil, savedQueryID: UUID? = nil, isPreview: Bool = false, color: TabColor? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
         self.isDirty = isDirty
         self.queryText = queryText
         self.savedQueryID = savedQueryID
+        self.isPreview = isPreview
+        self.color = color
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, title, isDirty, queryText, savedQueryID, isPreview, color
+    }
+
+    /// Tolerant: `isPreview` and `color` are absent in older data, and an unknown colour is dropped.
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        title = try c.decode(String.self, forKey: .title)
+        isDirty = try c.decodeIfPresent(Bool.self, forKey: .isDirty) ?? false
+        queryText = try c.decodeIfPresent(String.self, forKey: .queryText)
+        savedQueryID = try c.decodeIfPresent(UUID.self, forKey: .savedQueryID)
+        let preview = try c.decodeIfPresent(Bool.self, forKey: .isPreview) ?? false
+        if case .table = kind { isPreview = preview } else { isPreview = false }
+        color = (try? c.decodeIfPresent(TabColor.self, forKey: .color)) ?? nil
     }
 
     /// Dot colour role for this tab.
@@ -78,10 +120,54 @@ public struct WorkspaceTabs: Hashable, Sendable, Codable {
 
     // MARK: Opening
 
-    /// Selects the existing tab for this table, or appends and selects a new one.
+    /// What opening a table did: the tab to show, and the preview tab it replaced (so the caller can
+    /// drop that tab's data model).
+    public struct OpenResult: Equatable, Sendable {
+        public var id: WorkspaceTab.ID
+        public var replacedID: WorkspaceTab.ID?
+    }
+
+    /// Opens a table. `forceNewTab` (command-click, "Open in New Tab") always appends a kept tab, even
+    /// when the table is already open. Otherwise `behaviour` decides: preview reuses the table's tab if
+    /// open, else replaces the (clean) preview tab in place, else appends a new preview tab; reuse
+    /// focuses the table's tab or appends a kept one; newTab always appends a kept tab.
     @discardableResult
-    public mutating func openTable(database: String, name: String) -> WorkspaceTab.ID {
-        open(kind: .table(database: database, name: name), title: name, reuseExisting: true)
+    public mutating func openTable(
+        database: String, name: String, behaviour: TableClickBehaviour = .reuseExisting, forceNewTab: Bool = false
+    ) -> OpenResult {
+        let kind = WorkspaceTab.Kind.table(database: database, name: name)
+        if forceNewTab || behaviour == .newTab {
+            return OpenResult(id: append(WorkspaceTab(kind: kind, title: name)), replacedID: nil)
+        }
+        if let existing = tabs.first(where: { $0.kind == kind }) {
+            selectedID = existing.id
+            return OpenResult(id: existing.id, replacedID: nil)
+        }
+        guard behaviour == .preview else { return OpenResult(id: append(WorkspaceTab(kind: kind, title: name)), replacedID: nil) }
+        let fresh = WorkspaceTab(kind: kind, title: name, isPreview: true)
+        if let i = tabs.firstIndex(where: { $0.isPreview && !$0.isDirty }) {
+            let old = tabs[i].id
+            tabs[i] = fresh
+            selectedID = fresh.id
+            return OpenResult(id: fresh.id, replacedID: old)
+        }
+        return OpenResult(id: append(fresh), replacedID: nil)
+    }
+
+    private mutating func append(_ tab: WorkspaceTab) -> WorkspaceTab.ID {
+        tabs.append(tab)
+        selectedID = tab.id
+        return tab.id
+    }
+
+    /// Turns a preview tab into a normal one (double-click, edit, filter or sort change).
+    public mutating func keep(id: WorkspaceTab.ID) {
+        if let i = tabs.firstIndex(where: { $0.id == id }), tabs[i].isPreview { tabs[i].isPreview = false }
+    }
+
+    /// Tabs showing this table, in tab order (several are allowed).
+    public func tabs(database: String, name: String) -> [WorkspaceTab] {
+        tabs.filter { $0.kind == .table(database: database, name: name) }
     }
 
     /// Appends and selects "Query N"; N is one higher than every query number used so far.
@@ -188,8 +274,52 @@ public struct WorkspaceTabs: Hashable, Sendable, Codable {
     // MARK: Editing
 
     /// Marks a tab as having (or not having) unsaved content.
+    /// A dirty tab is never a preview tab, so it can't be replaced.
     public mutating func setDirty(id: WorkspaceTab.ID, _ dirty: Bool) {
-        if let i = tabs.firstIndex(where: { $0.id == id }) { tabs[i].isDirty = dirty }
+        if let i = tabs.firstIndex(where: { $0.id == id }) {
+            tabs[i].isDirty = dirty
+            if dirty { tabs[i].isPreview = false }
+        }
+    }
+
+    /// Sets (or clears) a tab's colour.
+    public mutating func setColor(id: WorkspaceTab.ID, _ color: TabColor?) {
+        if let i = tabs.firstIndex(where: { $0.id == id }) { tabs[i].color = color }
+    }
+
+    /// Ids of every tab except `id`, in tab order.
+    public func ids(except id: WorkspaceTab.ID) -> [WorkspaceTab.ID] { tabs.map(\.id).filter { $0 != id } }
+
+    /// Ids of the tabs after `id`, in tab order (empty for an unknown id).
+    public func ids(after id: WorkspaceTab.ID) -> [WorkspaceTab.ID] {
+        guard let i = tabs.firstIndex(where: { $0.id == id }) else { return [] }
+        return tabs[(i + 1)...].map(\.id)
+    }
+
+    /// Whether a tab can be duplicated (everything but the single console).
+    public func canDuplicate(id: WorkspaceTab.ID) -> Bool {
+        guard let tab = tab(id: id) else { return false }
+        return tab.kind != .console
+    }
+
+    /// Inserts a copy right after `id` and selects it: a table tab shows the same table (kept, same
+    /// colour), a query tab gets the next "Query N" with the same text, a terminal another terminal.
+    /// Returns nil for the console or an unknown id.
+    @discardableResult
+    public mutating func duplicate(id: WorkspaceTab.ID) -> WorkspaceTab.ID? {
+        guard let i = tabs.firstIndex(where: { $0.id == id }), canDuplicate(id: id) else { return nil }
+        let source = tabs[i]
+        var copy = WorkspaceTab(kind: source.kind, title: source.title, color: source.color)
+        if case .query = source.kind {
+            let number = nextQueryNumber
+            nextQueryNumber += 1
+            copy.kind = .query(number: number)
+            copy.title = source.savedQueryID == nil ? "Query \(number)" : source.title
+            copy.queryText = source.queryText
+        }
+        tabs.insert(copy, at: i + 1)
+        selectedID = copy.id
+        return copy.id
     }
 
     /// Reorders tabs with the same semantics as SwiftUI's `onMove`: `offset` is a position

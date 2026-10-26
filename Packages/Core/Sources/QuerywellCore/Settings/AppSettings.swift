@@ -52,12 +52,16 @@ public struct AppSettings: Codable, Sendable, Equatable {
         public var reopenLastSession: Bool
         public var openConnectionBehaviour: OpenConnectionBehaviour
         public var confirmBeforeClosingConnectionWindow: Bool
+        /// What a single click on a table in the sidebar does.
+        public var tableClickBehaviour: TableClickBehaviour
 
         public init(
             reopenLastSession: Bool = true,
             openConnectionBehaviour: OpenConnectionBehaviour = .focusExisting,
-            confirmBeforeClosingConnectionWindow: Bool = true
+            confirmBeforeClosingConnectionWindow: Bool = true,
+            tableClickBehaviour: TableClickBehaviour = .preview
         ) {
+            self.tableClickBehaviour = tableClickBehaviour
             self.reopenLastSession = reopenLastSession
             self.openConnectionBehaviour = openConnectionBehaviour
             self.confirmBeforeClosingConnectionWindow = confirmBeforeClosingConnectionWindow
@@ -70,6 +74,7 @@ public struct AppSettings: Codable, Sendable, Equatable {
             openConnectionBehaviour = c.value(.openConnectionBehaviour, d.openConnectionBehaviour)
             confirmBeforeClosingConnectionWindow = c.value(
                 .confirmBeforeClosingConnectionWindow, d.confirmBeforeClosingConnectionWindow)
+            tableClickBehaviour = c.value(.tableClickBehaviour, d.tableClickBehaviour)
         }
     }
 
