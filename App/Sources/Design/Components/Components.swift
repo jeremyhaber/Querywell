@@ -88,3 +88,19 @@ struct CaptionLabel: View {
             .accessibilityAddTraits(.isHeader)
     }
 }
+
+/// Accent-filled primary button drawn by us (not system glass), so it reads the same in
+/// active/inactive windows and popovers on macOS 26. Dimmed when disabled.
+struct AccentFillButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Theme.accent, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
+            .contentShape(RoundedRectangle(cornerRadius: Theme.controlRadius))
+    }
+}

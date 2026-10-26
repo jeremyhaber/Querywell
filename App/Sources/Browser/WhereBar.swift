@@ -44,7 +44,7 @@ struct WhereTextField: NSViewRepresentable {
         field.focusRingType = .none
         field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         field.textColor = ThemeNS.text
-        field.placeholderString = "post_status = 'publish' AND post_type = 'page'"
+        field.placeholderString = "Filter rows with SQL, e.g. ID > 100  (⌘L)"  // never a realistic condition: it would read as an active filter
         field.lineBreakMode = .byClipping
         field.usesSingleLineMode = true
         field.cell?.isScrollable = true

@@ -39,21 +39,24 @@ struct FilterPopoverView: View {
                     Text("Clear").frame(maxWidth: .infinity, minHeight: 22)
                 }
                 .controlSize(.large)
-                Button {
-                    model.apply()
-                } label: {
-                    Text("Apply").fontWeight(.medium).frame(maxWidth: .infinity, minHeight: 22)
-                }
-                .controlSize(.large)
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
-                .disabled(!model.canApply)
+                applyButton
             }
         }
         .padding(14)
         .frame(width: 280)
         .background(Theme.elevated)
         .task { if model.condition.usesValueList { await model.load() } }
+    }
+
+    private var applyButton: some View {
+        Button {
+            model.apply()
+        } label: {
+            Text("Apply").fontWeight(.medium).frame(maxWidth: .infinity, minHeight: 22)
+        }
+        .buttonStyle(AccentFillButtonStyle())
+        .keyboardShortcut(.defaultAction)
+        .disabled(!model.canApply)
     }
 
     private var valueList: some View {
