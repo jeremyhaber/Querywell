@@ -169,8 +169,9 @@ struct SQLHighlighterTests {
         let elapsed = clock.now - t0
         #expect(spans.count > 100_000)
         #if DEBUG
-        // Unoptimised test builds are several times slower than release; the product bound is 50 ms.
-        #expect(elapsed < .milliseconds(600), "took \(elapsed)")
+        // Unoptimised builds run ~0.1 s here but share the CPU with parallel integration suites, so
+        // this only catches pathological (quadratic) regressions; the product bound is 50 ms (release).
+        #expect(elapsed < .seconds(2), "took \(elapsed)")
         #else
         #expect(elapsed < .milliseconds(50), "took \(elapsed)")
         #endif
