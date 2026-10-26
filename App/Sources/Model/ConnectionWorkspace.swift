@@ -23,6 +23,10 @@ final class ConnectionWorkspace: Identifiable {
     var tabs = WorkspaceTabs()
     private(set) var databases: [String] = []
     var selectedDatabase: String?
+    /// Sidebar state: schemas, cached table lists, filter and multi-selection.
+    let browser = SchemaBrowserModel()
+    /// Bumped on every successful (re)connect; table tabs reload when it changes.
+    private(set) var connectionEpoch = 0
 
     @ObservationIgnored private(set) var live: LiveConnection?
     @ObservationIgnored weak var window: NSWindow?
@@ -31,6 +35,8 @@ final class ConnectionWorkspace: Identifiable {
     @ObservationIgnored private var keepaliveTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private(set) var isClosed = false
+    @ObservationIgnored private var tableModels: [WorkspaceTab.ID: TableDataModel] = [:]
+    @ObservationIgnored var savedFiltersStore: SavedFiltersStore?
 
     init(profile: ConnectionProfile, opener: ConnectionOpener, keepaliveInterval: Duration = .seconds(60)) {
         self.profile = profile
@@ -93,9 +99,14 @@ final class ConnectionWorkspace: Identifiable {
             let latency = await measureLatency(live)
             // The window may have been closed (or the user disconnected) while we pinged.
             guard !isClosed, self.live === live else { return }
+            connectionEpoch += 1
             state = .connected(live.session.serverInfo, latency: latency)
             startKeepalive(live)
             await loadDatabases(live)
+            guard !isClosed, self.live === live else { return }
+            browser.attach(
+                inspector: SchemaInspectorFactory.inspector(for: live.session), engine: profile.engine,
+                preferred: profile.engine == .postgresql ? nil : selectedDatabase)
         } catch let error as ConnectionOpenError {
             if !isClosed { state = .failed(error) }
         } catch {
@@ -131,6 +142,7 @@ final class ConnectionWorkspace: Identifiable {
         keepaliveTask = nil
         databases = []
         selectedDatabase = nil
+        browser.detach()
         let live = self.live
         self.live = nil
         await live?.close()
@@ -216,6 +228,43 @@ final class ConnectionWorkspace: Identifiable {
     func selectTab(at index: Int) {
         guard tabs.tabs.indices.contains(index) else { return }
         tabs.select(id: tabs.tabs[index].id)
+    }
+
+    // MARK: Table tabs
+
+    /// Opens (or focuses) a table's tab; `filter` replaces the tab's chips (foreign-key navigation).
+    func openTable(_ ref: TableRef, filter: ColumnFilter? = nil) {
+        let id = tabs.openTable(database: ref.schema, name: ref.name)
+        guard let tab = tabs.tab(id: id), let model = tableModel(forTab: tab) else { return }
+        if let filter { model.replaceFilters(with: filter) }
+    }
+
+    /// The model behind a table tab, created on first use. Models of closed tabs are dropped here.
+    func tableModel(forTab tab: WorkspaceTab) -> TableDataModel? {
+        guard case .table(let database, let name) = tab.kind else { return nil }
+        if let existing = tableModels[tab.id] { return existing }
+        let open = Set(tabs.tabs.map(\.id))
+        tableModels = tableModels.filter { open.contains($0.key) }
+        let model = TableDataModel(table: TableRef(schema: database, name: name))
+        model.sessionProvider = { [weak self] in self?.live?.session }
+        model.inspectorProvider = { [weak self] in self?.browser.inspector }
+        model.savedFiltersStore = savedFiltersStore
+        model.connectionID = profile.id
+        model.openTable = { [weak self] ref, filter in self?.openTable(ref, filter: filter) }
+        tableModels[tab.id] = model
+        return model
+    }
+
+    /// The model of the open tab for `ref`, if any.
+    func tableModel(forTable ref: TableRef) -> TableDataModel? {
+        tabs.tabs.first { $0.kind == .table(database: ref.schema, name: ref.name) }.flatMap { tableModel(forTab: $0) }
+    }
+
+    /// ⌘R: re-read schemas and tables, and the structure of open tables.
+    func refreshSchema() {
+        browser.refresh()
+        for model in tableModels.values { model.invalidateStructure() }
+        if let tab = tabs.selectedTab, let model = tableModel(forTab: tab), model.hasLoaded { model.reload() }
     }
 
     // MARK: Window

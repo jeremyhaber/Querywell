@@ -69,6 +69,9 @@ enum ThemeNS {
     static var pendingPillBackground: NSColor { .dynamic(light: 0xFFF7E6, dark: 0x3D3114) }
     static var pendingPillBorder: NSColor { .dynamic(light: 0xE8B04A, dark: 0x8A6A25) }
     static var pendingPillText: NSColor { .dynamic(light: 0x7A4B00, dark: 0xF2CD83) }
+    /// Status pill (publish): bg `#E2F4E8` text `#1F6B3F`.
+    static var pillPositiveBackground: NSColor { .dynamic(light: 0xE2F4E8, dark: 0x1F3D2C) }
+    static var pillPositiveText: NSColor { .dynamic(light: 0x1F6B3F, dark: 0x7DD6A0) }
 }
 
 /// SwiftUI flavours of the tokens.
@@ -113,6 +116,9 @@ enum Theme {
     static var pendingPillBackground: Color { Color(nsColor: ThemeNS.pendingPillBackground) }
     static var pendingPillBorder: Color { Color(nsColor: ThemeNS.pendingPillBorder) }
     static var pendingPillText: Color { Color(nsColor: ThemeNS.pendingPillText) }
+    static var pillPositiveBackground: Color { Color(nsColor: ThemeNS.pillPositiveBackground) }
+    static var pillPositiveText: Color { Color(nsColor: ThemeNS.pillPositiveText) }
+    static var chipRemoveBackground: Color { Color(nsColor: .dynamic(light: 0xC9D7F5, dark: 0x3A507F)) }
 
     // Radii (design): window 12, cards 10, controls 8, small 6, badges 4.
     static let cardRadius: CGFloat = 10

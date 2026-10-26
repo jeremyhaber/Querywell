@@ -424,113 +424,18 @@ struct ConnectionWindowContent: View {
         let connections = model.library.profiles
             .sorted { ($0.lastUsedAt ?? .distantPast) > ($1.lastUsedAt ?? .distantPast) }
             .map { QuickSwitcherItem.connection($0.id, name: $0.name, tag: $0.colorTag) }
-        return tabs + connections + QuickAction.allCases.map(QuickSwitcherItem.action)
+        return tabs + workspace.browser.switcherItems + connections + QuickAction.allCases.map(QuickSwitcherItem.action)
     }
 
     private func perform(_ item: QuickSwitcherItem) {
         switch item {
         case .connection(let id, _, _): model.openConnection(id, using: openWindow)
         case .openTab(let id, _): workspace.tabs.select(id: id)
-        case .table(let database, let name): workspace.tabs.openTable(database: database, name: name)
+        case .table(let database, let name): workspace.openTable(TableRef(schema: database, name: name))
         case .action(.newQuery): workspace.newQuery()
         case .action(.newConsole): workspace.openConsole()
         case .action(.openConnections): openWindow(id: "launcher")
         case .action(.settings): openSettings()
-        }
-    }
-}
-
-/// Left column: database picker and table filter (the table list arrives with the table browser).
-struct WorkspaceSidebar: View {
-    @Bindable var workspace: ConnectionWorkspace
-    @State private var filter = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                CaptionLabel("Database")
-                Picker("Database", selection: $workspace.selectedDatabase) {
-                    if workspace.databases.isEmpty {
-                        Text("No databases").tag(String?.none)
-                    }
-                    ForEach(workspace.databases, id: \.self) { name in
-                        Text(name).tag(String?.some(name))
-                    }
-                }
-                .labelsHidden()
-                .disabled(workspace.databases.isEmpty)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                CaptionLabel("Filter tables")
-                TextField("Filter…", text: $filter)
-                    .textFieldStyle(.roundedBorder)
-                    .accessibilityLabel("Filter tables")
-            }
-            CaptionLabel("Tables")
-            Text("Tables load in the table browser (Phase 4)")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.textSecondary)
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.sidebar)
-    }
-}
-
-/// The selected tab's content. Real editors arrive in later phases.
-struct TabContentView: View {
-    let workspace: ConnectionWorkspace
-
-    var body: some View {
-        Group {
-            if let tab = workspace.tabs.selectedTab {
-                placeholder(for: tab)
-            } else {
-                emptyState
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.background)
-    }
-
-    private func placeholder(for tab: WorkspaceTab) -> some View {
-        let (symbol, text): (String, String) = switch tab.kind {
-        case .table: ("tablecells", "Table browser — Phase 4")
-        case .query: ("chevron.left.forwardslash.chevron.right", "Query editor — Phase 5")
-        case .console: ("terminal", "Console — Phase 7")
-        case .terminal: ("apple.terminal", "Terminal — Phase 7")
-        }
-        return VStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 36))
-                .foregroundStyle(Theme.color(for: tab.accent))
-                .accessibilityHidden(true)
-            Text(tab.title).font(.title3.weight(.semibold))
-            Text(text).foregroundStyle(Theme.textSecondary)
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "rectangle.stack")
-                .font(.system(size: 40))
-                .foregroundStyle(Theme.textTertiary)
-                .accessibilityHidden(true)
-            Text("No tabs open").font(.title3.weight(.semibold))
-            Text("Start a query or open a console. Press ⌘K to jump to anything.")
-                .foregroundStyle(Theme.textSecondary)
-            HStack {
-                Button {
-                    workspace.newQuery()
-                } label: {
-                    Label("New Query", systemImage: "plus")
-                }
-                .buttonStyle(.borderedProminent)
-                Button("Open Console") { workspace.openConsole() }
-            }
-            .controlSize(.large)
         }
     }
 }

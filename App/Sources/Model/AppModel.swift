@@ -21,6 +21,7 @@ final class AppModel {
     @ObservationIgnored let settingsStore: AppSettingsStore
     @ObservationIgnored let opener: ConnectionOpener
     @ObservationIgnored let tester: ConnectionTester
+    @ObservationIgnored let savedFiltersStore: SavedFiltersStore
     @ObservationIgnored private var settingsSaveTask: Task<Void, Never>?
 
     private(set) var library = ConnectionLibrary()
@@ -36,11 +37,15 @@ final class AppModel {
         repository: ConnectionRepository,
         secretStore: any SecretStore,
         settingsStore: AppSettingsStore,
-        opener: ConnectionOpener? = nil
+        opener: ConnectionOpener? = nil,
+        savedFiltersStore: SavedFiltersStore? = nil
     ) {
         self.repository = repository
         self.secretStore = secretStore
         self.settingsStore = settingsStore
+        self.savedFiltersStore = savedFiltersStore ?? SavedFiltersStore(
+            fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("QuerywellSavedFilters-\(UUID().uuidString).json"))
         let opener = opener ?? ConnectionOpener(secretStore: secretStore)
         self.opener = opener
         self.tester = ConnectionTester(opener: opener)
@@ -54,7 +59,9 @@ final class AppModel {
             secretStore: secretStore,
             settingsStore: AppSettingsStore(
                 fileURL: directory.appendingPathComponent(AppDirectories.settingsFileName)),
-            opener: opener)
+            opener: opener,
+            savedFiltersStore: SavedFiltersStore(
+                fileURL: directory.appendingPathComponent(AppDirectories.savedFiltersFileName)))
     }
 
     /// The real app: Application Support + Keychain.
@@ -316,6 +323,7 @@ final class AppModel {
             return nil
         }
         let workspace = ConnectionWorkspace(profile: profile, opener: opener)
+        workspace.savedFiltersStore = savedFiltersStore
         workspaces[workspace.id] = workspace
         do {
             try await repository.markUsed(id: profileID)
