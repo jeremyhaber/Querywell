@@ -13,6 +13,24 @@
 
 **Next — Phase 2 (Connectivity):** `DatabaseDriver` protocol; MySQLNIO / PostgresNIO drivers; SSH tunnels via Citadel (fallback `ssh -L`); TLS; connection test; docker-compose integration tests (MySQL 8, MariaDB 11, Postgres 16) that skip without Docker.
 
+## Phase 2 — Connectivity ✅ (2026-10-26)
+
+**Built**
+- `DatabaseDriver` / `DatabaseSession` contracts with `DatabaseValue`, `QueryResult`, `ServerInfo`, typed `DatabaseError`; `DriverRegistry`.
+- MySQL/MariaDB driver (MySQLNIO 1.9 + custom text-protocol command for column metadata on empty sets, affected rows, insert IDs; MariaDB auto-detection; connect timeout; TLS verification enforcement incl. preferred→plaintext fallback).
+- PostgreSQL driver (PostgresNIO 1.33; canonical text rendering of binary results for numeric/date/time/interval/json/uuid/inet/arrays/ranges/enums; command-tag row counts; pg_stat_ssl TLS detection).
+- SSH tunnels via system OpenSSH (`SystemSSHTunnelProvider`): key file, encrypted key, agent (incl. 1Password socket path), password via secure one-shot askpass; host-key TOFU with hard fail on change; reusable `SSHCommandBuilder` for Phase 7.
+- `ConnectionOpener` → `LiveConnection` (session + tunnel), `ConnectionTester` with stage timings, latency, warnings (engine mismatch, unencrypted, PROD without TLS/SSH), user-facing errors with recovery suggestions; fail-fast when a bastion can't reach the DB.
+- `docker-compose.yml` (MySQL 8.4, MariaDB 11.4, Postgres 16 + TLS, Alpine sshd bastion), `scripts/integration.sh`, wired into `scripts/ci.sh`.
+
+**Status:** CI PASS from a clean build — 0 warnings; 154 Core tests (unit + Docker integration against all three servers and the bastion) + app tests. Three consecutive green runs.
+
+**Decided:** DECISIONS #13–23 (system ssh over Citadel, host-key policy, integration setup, warning gate scope, driver caveats, fail-fast tunnels).
+
+**Known caveats → revisit Phase 5:** Postgres zero-row SELECT column fetch via `LIMIT 0` wrapper; composite/geometric PG types as bytes; MySQLNIO Debug assertion on late pipeline errors; `verifyCA` only unit-tested.
+
+**Next — Phase 3 (App shell):** launcher window per design (`design/project/Connections.dc.html`), connection editor with Test button, one window per connection holding a `LiveConnection`, native tabs, ⌘K switcher, PROD badge, Settings.
+
 ## Scope additions (requested by Jeremy, 2026-10-26)
 
 ### A. Collation / charset compatibility on export (and import) — Phase 7

@@ -69,12 +69,15 @@ final class FakeTunnel: SSHTunnel {
     let localPort: Int
     private let state = OSAllocatedUnfairLock(initialState: 0)
     let order: OSAllocatedUnfairLock<[String]>?
-    init(localPort: Int, order: OSAllocatedUnfairLock<[String]>? = nil) {
+    let failureReason: String?
+    init(localPort: Int, order: OSAllocatedUnfairLock<[String]>? = nil, failureReason: String? = nil) {
         self.localPort = localPort
         self.order = order
+        self.failureReason = failureReason
     }
     var closeCount: Int { state.withLock { $0 } }
     var isRunning: Bool { get async { closeCount == 0 } }
+    var forwardFailure: String? { get async { failureReason } }
     func close() async {
         state.withLock { $0 += 1 }
         order?.withLock { $0.append("tunnel") }
@@ -85,16 +88,35 @@ final class FakeTunnelProvider: SSHTunnelProvider {
     private let requests = OSAllocatedUnfairLock(initialState: [SSHTunnelRequest]())
     private let tunnels = OSAllocatedUnfairLock(initialState: [FakeTunnel]())
     let failure: SSHTunnelError?
-    init(failure: SSHTunnelError? = nil) { self.failure = failure }
+    let forwardFailureReason: String?
+    init(failure: SSHTunnelError? = nil, forwardFailureReason: String? = nil) {
+        self.failure = failure
+        self.forwardFailureReason = forwardFailureReason
+    }
     var receivedRequests: [SSHTunnelRequest] { requests.withLock { $0 } }
     var openedTunnels: [FakeTunnel] { tunnels.withLock { $0 } }
 
     func open(_ request: SSHTunnelRequest) async throws -> any SSHTunnel {
         requests.withLock { $0.append(request) }
         if let failure { throw failure }
-        let t = FakeTunnel(localPort: 40_000 + tunnels.withLock { $0.count })
+        let t = FakeTunnel(localPort: 40_000 + tunnels.withLock { $0.count }, failureReason: forwardFailureReason)
         tunnels.withLock { $0.append(t) }
         return t
+    }
+}
+
+/// Mimics a driver stuck in its handshake behind a tunnel: it only fails once the tunnel closes.
+final class HangingDriver: DatabaseDriver {
+    let engines: Set<DatabaseEngine> = Set(DatabaseEngine.allCases)
+    let tunnels: FakeTunnelProvider
+    init(tunnels: FakeTunnelProvider) { self.tunnels = tunnels }
+    func connect(_ configuration: ConnectionConfiguration) async throws -> any DatabaseSession {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
+            if let t = tunnels.openedTunnels.first, t.closeCount > 0 { throw DatabaseError.connectionFailed("EOF") }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw DatabaseError.timeout
     }
 }
 
@@ -190,6 +212,18 @@ struct ConnectionOpenerUnitTests {
             _ = try await opener(driver, tunnels).open(profile(ssh: sshConfig))
         }
         #expect(tunnels.openedTunnels.first?.closeCount == 1)
+    }
+
+    @Test func forwardFailureFailsFastWithSSHReason() async {
+        let tunnels = FakeTunnelProvider(forwardFailureReason: "connect failed: Name does not resolve")
+        let driver = HangingDriver(tunnels: tunnels)
+        let o = ConnectionOpener(secretStore: InMemorySecretStore(), tunnelProvider: tunnels, driverForEngine: { _ in driver })
+        let start = ContinuousClock.now
+        await #expect(throws: ConnectionOpenError.databaseUnreachableThroughTunnel(
+            host: "db.internal", port: 3306, underlying: .connectionFailed("connect failed: Name does not resolve"))) {
+            _ = try await o.open(profile(ssh: sshConfig))
+        }
+        #expect(ContinuousClock.now - start < .seconds(3))
     }
 
     @Test func timeoutThroughTunnelIsUnreachable() async {

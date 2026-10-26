@@ -61,7 +61,8 @@ public enum SSHCommandBuilder {
         if let kh = options.knownHostsFile {
             args += ["-o", "UserKnownHostsFile=\(quoteOptionValue(expandTilde(kh)))"]
         }
-        args += ["-o", "LogLevel=ERROR"]
+        // INFO (not ERROR) so forward failures ("channel N: open failed: …") reach stderr immediately.
+        args += ["-o", "LogLevel=INFO"]
 
         switch config.auth {
         case .keyFile(let path):
@@ -104,6 +105,16 @@ public enum SSHCommandBuilder {
 
 /// Maps ssh's stderr + exit status to a user-facing error.
 public enum SSHErrorMapper {
+    /// Extracts the reason from ssh's "channel N: open failed: <reason>" line, if present.
+    public static func forwardFailure(in stderr: String) -> String? {
+        for line in stderr.split(whereSeparator: \.isNewline) {
+            guard let range = line.range(of: "open failed: ") else { continue }
+            let reason = line[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            return reason.isEmpty ? String(line) : reason
+        }
+        return nil
+    }
+
     public static func map(status: Int32, stderr: String) -> SSHTunnelError {
         let text = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = text.lowercased()

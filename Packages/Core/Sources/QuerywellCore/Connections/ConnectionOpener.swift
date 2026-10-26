@@ -71,13 +71,24 @@ public struct ConnectionOpener: Sendable {
             engine: profile.engine, host: host, port: port, user: profile.user,
             password: dbPassword, database: database ?? profile.defaultDatabase,
             tls: profile.tls, tlsServerName: tlsServerName)
-        do {
-            let session = try await driverForEngine(profile.engine).connect(configuration)
+        let driver = driverForEngine(profile.engine)
+        let outcome = await Self.connect(driver, configuration, watching: tunnel)
+        switch outcome {
+        case .session(let session):
             progress?(.connected)
             return LiveConnection(profile: profile, session: session, tunnel: tunnel)
-        } catch {
+        case .forwardFailure(let reason):
+            await tunnel?.close()
+            throw ConnectionOpenError.databaseUnreachableThroughTunnel(
+                host: profile.host, port: profile.port, underlying: .connectionFailed(reason))
+        case .failed(let error):
+            let forwardFailure = await tunnel?.forwardFailure
             await tunnel?.close()
             if error is CancellationError { throw error }
+            if let forwardFailure {
+                throw ConnectionOpenError.databaseUnreachableThroughTunnel(
+                    host: profile.host, port: profile.port, underlying: .connectionFailed(forwardFailure))
+            }
             let dbError = (error as? DatabaseError) ?? .connectionFailed(Self.describe(error))
             if tunnel != nil {
                 // A dead or unresolvable target behind the bastion shows up as EOF/reset or as a
@@ -90,6 +101,59 @@ public struct ConnectionOpener: Sendable {
             }
             throw ConnectionOpenError.database(dbError)
         }
+    }
+
+    private enum ConnectOutcome: Sendable {
+        case session(any DatabaseSession)
+        case failed(any Error)
+        case forwardFailure(String)
+    }
+
+    /// Connects the driver, racing it against the tunnel's forward-failure signal.
+    ///
+    /// ssh only dials the target when the driver connects. If the bastion can't reach it, ssh logs
+    /// "open failed" while the driver's handshake can sit until its timeout (MySQLNIO doesn't fail a
+    /// pending handshake when the socket closes), so whichever finishes first wins. A connect that
+    /// loses the race is cancelled and any session it still produces is closed.
+    private static func connect(
+        _ driver: any DatabaseDriver, _ configuration: ConnectionConfiguration, watching tunnel: (any SSHTunnel)?
+    ) async -> ConnectOutcome {
+        let (outcomes, continuation) = AsyncStream.makeStream(of: ConnectOutcome.self)
+        let connectTask = Task {
+            do {
+                let session = try await driver.connect(configuration)
+                continuation.yield(.session(session))
+                return session
+            } catch {
+                continuation.yield(.failed(error))
+                throw error
+            }
+        }
+        let watchTask = tunnel.map { tunnel in
+            Task {
+                while !Task.isCancelled {
+                    if let reason = await tunnel.forwardFailure {
+                        continuation.yield(.forwardFailure(reason))
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+        }
+        let first = await withTaskCancellationHandler {
+            var iterator = outcomes.makeAsyncIterator()
+            return await iterator.next() ?? .failed(CancellationError())
+        } onCancel: {
+            connectTask.cancel()
+            continuation.yield(.failed(CancellationError()))
+        }
+        watchTask?.cancel()
+        continuation.finish()
+        if case .session = first { return first }
+        // The connect lost (or failed): make sure a late session doesn't leak.
+        connectTask.cancel()
+        Task { if let late = try? await connectTask.value { await late.close() } }
+        return first
     }
 
     private static func describe(_ error: any Error) -> String {

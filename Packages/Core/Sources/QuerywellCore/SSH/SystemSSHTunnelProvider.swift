@@ -9,6 +9,22 @@ public struct SystemSSHTunnelProvider: SSHTunnelProvider {
     }
 
     public func open(_ request: SSHTunnelRequest) async throws -> any SSHTunnel {
+        // The free port is probed then handed to ssh, so another socket (another tunnel, or any
+        // outbound connection's ephemeral port) can take it in between. ssh then exits with
+        // "Address already in use" (ExitOnForwardFailure); retry on a fresh port.
+        var attempt = 0
+        while true {
+            attempt += 1
+            do {
+                return try await openOnce(request)
+            } catch let error as SSHTunnelError {
+                guard attempt < 3, case .forwardFailed(let text) = error,
+                      text.lowercased().contains("address already in use") else { throw error }
+            }
+        }
+    }
+
+    private func openOnce(_ request: SSHTunnelRequest) async throws -> any SSHTunnel {
         guard FileManager.default.isExecutableFile(atPath: options.sshExecutable) else {
             throw SSHTunnelError.sshNotFound(options.sshExecutable)
         }
@@ -136,6 +152,10 @@ public final class SystemSSHTunnel: SSHTunnel, @unchecked Sendable {
 
     /// Recent ssh stderr output, for diagnostics.
     public var stderrOutput: String { stderr.text }
+
+    public var forwardFailure: String? {
+        SSHErrorMapper.forwardFailure(in: stderr.text)
+    }
 
     public func close() async {
         let already = markClosing()

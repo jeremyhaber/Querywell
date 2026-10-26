@@ -35,8 +35,15 @@ public protocol SSHTunnel: AnyObject, Sendable {
     var localHost: String { get }
     var localPort: Int { get }
     var isRunning: Bool { get async }
+    /// Set once the SSH server reports it couldn't reach the forward target
+    /// (e.g. "connect failed: Name does not resolve"); `nil` while healthy.
+    var forwardFailure: String? { get async }
     /// Tears the tunnel down. Idempotent.
     func close() async
+}
+
+extension SSHTunnel {
+    public var forwardFailure: String? { get async { nil } }
 }
 
 /// Creates tunnels. Default implementation: ``SystemSSHTunnelProvider`` (OpenSSH `ssh -L`).

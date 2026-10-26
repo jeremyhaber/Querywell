@@ -138,10 +138,14 @@ struct ConnectionIntegrationTests {
         let fx = try SSHFixture()
         let provider = fx.provider()
         let p = ConnTarget.mysql8.tunnelled(auth: .password, host: "nosuchhost")
+        let start = ContinuousClock.now
         let report = await ConnectionTester(secretStore: try store(for: p), tunnelProvider: provider).test(p)
         #expect(!report.succeeded)
-        if case .databaseUnreachableThroughTunnel(let host, let port, _) = report.error {
+        // Fails fast on ssh's "open failed" instead of waiting out the driver's 15s timeout.
+        #expect(ContinuousClock.now - start < .seconds(5))
+        if case .databaseUnreachableThroughTunnel(let host, let port, let underlying) = report.error {
             #expect(host == "nosuchhost" && port == 3306)
+            #expect(underlying == .connectionFailed("connect failed: Name does not resolve"))
         } else {
             Issue.record("wrong error \(String(describing: report.error))")
         }

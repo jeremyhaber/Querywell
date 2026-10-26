@@ -31,7 +31,7 @@ struct SSHCommandBuilderTests {
         #expect(o.contains("ServerAliveCountMax=3"))
         #expect(o.contains("NumberOfPasswordPrompts=1"))
         #expect(o.contains("StrictHostKeyChecking=accept-new"))
-        #expect(o.contains("LogLevel=ERROR"))
+        #expect(o.contains("LogLevel=INFO"))
         #expect(args.suffix(4) == ["-N", "-L", "127.0.0.1:5555:db:3306", "me@bastion"])
     }
 
@@ -147,23 +147,49 @@ struct SSHAskpassTests {
         #expect(!FileManager.default.fileExists(atPath: askpass.directory.path))
     }
 
+    @Test func freePortsAreDistinct() throws {
+        let ports = try (0..<20).map { _ in try LoopbackPort.findFree() }
+        #expect(Set(ports).count == ports.count)
+    }
+
     @Test func freePortIsBindable() throws {
-        let port = try LoopbackPort.findFree()
-        #expect(port > 0 && port < 65536)
-        #expect(!LoopbackPort.isInUse(port))
-        // Hold it, then it must read as in use.
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        defer { close(fd) }
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(UInt16(port)).bigEndian
-        addr.sin_addr = in_addr(s_addr: UInt32(0x7f00_0001).bigEndian)
-        let b = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        // Other tests open sockets concurrently and may grab a just-probed port (that's why the
+        // provider retries); hold the first one we can actually bind.
+        var port = 0
+        var fd: Int32 = -1
+        var b: Int32 = -1
+        for _ in 0..<10 {
+            port = try LoopbackPort.findFree()
+            #expect(port > 0 && port < 65536)
+            fd = socket(AF_INET, SOCK_STREAM, 0)
+            var addr = sockaddr_in()
+            addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            addr.sin_family = sa_family_t(AF_INET)
+            addr.sin_port = in_port_t(UInt16(port)).bigEndian
+            addr.sin_addr = in_addr(s_addr: UInt32(0x7f00_0001).bigEndian)
+            b = withUnsafePointer(to: &addr) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+            }
+            if b == 0 { break }
+            close(fd)
         }
+        defer { close(fd) }
         #expect(b == 0)
         listen(fd, 1)
+        // Held, so it must read as in use.
         #expect(LoopbackPort.isInUse(port))
+    }
+}
+
+@Suite("SSH forward failure parsing")
+struct SSHForwardFailureTests {
+    @Test func extractsReason() {
+        let err = "Warning: Permanently added '[127.0.0.1]:12222' (ED25519) to the list of known hosts.\nchannel 1: open failed: connect failed: Name does not resolve\n"
+        #expect(SSHErrorMapper.forwardFailure(in: err) == "connect failed: Name does not resolve")
+    }
+
+    @Test func nilWhenHealthy() {
+        #expect(SSHErrorMapper.forwardFailure(in: "") == nil)
+        #expect(SSHErrorMapper.forwardFailure(in: "Warning: Permanently added host.\n") == nil)
     }
 }

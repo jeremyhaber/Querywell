@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Loopback port helpers (POSIX sockets).
 public enum LoopbackPort {
@@ -12,7 +13,24 @@ public enum LoopbackPort {
     }
 
     /// Binds 127.0.0.1:0, reads the assigned port and closes the socket.
+    /// Ports handed out recently in this process, so concurrent tunnels never get the same one.
+    private static let recentlyIssued = OSAllocatedUnfairLock(initialState: [Int]())
+
     public static func findFree() throws -> Int {
+        for _ in 0..<16 {
+            let port = try probeFree()
+            let fresh = recentlyIssued.withLock { recent in
+                guard !recent.contains(port) else { return false }
+                recent.append(port)
+                if recent.count > 64 { recent.removeFirst() }
+                return true
+            }
+            if fresh { return port }
+        }
+        return try probeFree()
+    }
+
+    private static func probeFree() throws -> Int {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         defer { close(fd) }
