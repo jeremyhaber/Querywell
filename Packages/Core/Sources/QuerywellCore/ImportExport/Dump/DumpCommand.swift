@@ -6,6 +6,11 @@ public enum ExportScope: String, Sendable, Hashable, CaseIterable {
     case structureAndData, structureOnly, dataOnly
 }
 
+/// What to export of one table. A missing entry in ``ExportOptions/tableModes`` means ``both``.
+public enum TableExportMode: String, Sendable, Hashable, Codable, CaseIterable {
+    case both, structureOnly, dataOnly, skip
+}
+
 public enum ExportLocation: String, Sendable, Hashable {
     /// `ssh user@host sh -s` with the dump tool running *on the server*; one compressed file comes back.
     case remoteOverSSH
@@ -23,6 +28,11 @@ public struct ExportOptions: Sendable, Equatable {
     public var gzip: Bool
     /// `nil` = every table in the database.
     public var tables: [String]?
+    /// Per-table overrides (missing = ``TableExportMode/both``). The planner groups tables by mode into up to
+    /// three dump invocations whose output is concatenated into one stream: normal, `--no-data`
+    /// (structure only), `--no-create-info` (data only); skipped tables are left out. The global ``scope``
+    /// applies to the tables without an entry.
+    public var tableModes: [String: TableExportMode]
     /// WordPress: leave out rows of `<prefix>options` whose `option_name` starts with `_transient_` or
     /// `_site_transient_`. MySQL/MariaDB only — see ``ExportPlanner`` for how this is built.
     public var skipWordPressTransients: Bool
@@ -45,13 +55,14 @@ public struct ExportOptions: Sendable, Equatable {
         gzip: Bool = true, tables: [String]? = nil, skipWordPressTransients: Bool = false, optionsTables: [String] = [],
         includeRoutines: Bool = false, includeTriggers: Bool = true, includeEvents: Bool = false,
         collation: CollationMapping? = nil, extendedInserts: Bool = true, hexBlob: Bool = false,
-        location: ExportLocation = .remoteOverSSH
+        location: ExportLocation = .remoteOverSSH, tableModes: [String: TableExportMode] = [:]
     ) {
         self.scope = scope
         self.singleTransaction = singleTransaction
         self.addDropTable = addDropTable
         self.gzip = gzip
         self.tables = tables
+        self.tableModes = tableModes
         self.skipWordPressTransients = skipWordPressTransients
         self.optionsTables = optionsTables
         self.includeRoutines = includeRoutines
@@ -316,22 +327,58 @@ public enum ExportPlanner {
     }
 
     /// The mysqldump invocations (arguments after the connection flags): `(label, arguments)`.
+    ///
+    /// Tables are grouped by ``TableExportMode``: the "both" group (everything not named otherwise, using the
+    /// global scope), a `--no-data` group, a `--no-create-info` group. Skipped tables are `--ignore-table`d
+    /// (or simply left out of an explicit table list). Routines and events are dumped by the first invocation only.
     static func mysqlInvocations(database: String, options o: ExportOptions) -> [(label: String, args: [String])] {
-        let flags = mysqlFlags(o)
+        let modes = o.tableModes
+        func members(_ m: TableExportMode) -> [String] {
+            let names = modes.filter { $0.value == m }.map(\.key).sorted()
+            guard let universe = o.tables else { return names }
+            return names.filter(universe.contains)
+        }
+        let structure = members(.structureOnly), dataOnly = members(.dataOnly), skipped = members(.skip)
+        let others = Set(structure + dataOnly + skipped)
+        var out: [(label: String, args: [String])] = []
+
+        func add(label: String, scope: ExportScope, tables: [String]?, ignores: [String]) {
+            var opts = o
+            opts.scope = scope
+            var flags = mysqlFlags(opts)
+            if !out.isEmpty { flags.removeAll { $0 == "--routines" || $0 == "--events" } }
+            out += transientAwareInvocations(database: database, options: opts, flags: flags, label: label, tables: tables, ignores: ignores)
+        }
+
+        // Everything without an override.
+        let bothTables = o.tables.map { $0.filter { !others.contains($0) } }
+        if bothTables?.isEmpty != true {
+            add(label: "Dump \(database)", scope: o.scope, tables: bothTables, ignores: bothTables == nil ? Array(others).sorted() : [])
+        }
+        if !structure.isEmpty { add(label: "Dump \(database) structure only", scope: .structureOnly, tables: structure, ignores: []) }
+        if !dataOnly.isEmpty { add(label: "Dump \(database) data only", scope: .dataOnly, tables: dataOnly, ignores: []) }
+        return out
+    }
+
+    /// One group's invocation(s). With WordPress transient skipping, the options table is dumped on its own with
+    /// the `--where`, and the rest of the group in another invocation that leaves it out.
+    private static func transientAwareInvocations(
+        database: String, options o: ExportOptions, flags: [String], label: String, tables: [String]?, ignores: [String]
+    ) -> [(label: String, args: [String])] {
+        let ignoreArgs = { (names: [String]) in names.map { "--ignore-table=\(database).\($0)" } }
         let filterRows = o.skipWordPressTransients && o.scope != .structureOnly && !o.optionsTables.isEmpty
         guard filterRows else {
-            return [("Dump \(database)", flags + [database] + (o.tables ?? []))]
+            return [(label, flags + ignoreArgs(ignores) + [database] + (tables ?? []))]
         }
         let optionsTables = o.optionsTables
-        var out: [(String, [String])] = []
-        if let tables = o.tables {
+        var out: [(label: String, args: [String])] = []
+        if let tables {
             let rest = tables.filter { !optionsTables.contains($0) }
-            if !rest.isEmpty { out.append(("Dump \(database)", flags + [database] + rest)) }
+            if !rest.isEmpty { out.append((label, flags + [database] + rest)) }
         } else {
-            let ignores = optionsTables.map { "--ignore-table=\(database).\($0)" }
-            out.append(("Dump \(database)", flags + ignores + [database]))
+            out.append((label, flags + ignoreArgs(ignores + optionsTables.filter { !ignores.contains($0) }) + [database]))
         }
-        let included = o.tables.map { t in optionsTables.filter(t.contains) } ?? optionsTables
+        let included = tables.map { t in optionsTables.filter(t.contains) } ?? optionsTables.filter { !ignores.contains($0) }
         for table in included {
             // Routines/events belong to the main invocation only.
             var f = flags.filter { $0 != "--routines" && $0 != "--events" }
@@ -341,18 +388,40 @@ public enum ExportPlanner {
         return out
     }
 
-    static func postgresArguments(database: String, options o: ExportOptions, connection: [String]) -> [String] {
-        var a = connection + ["--verbose", "--no-password"]
+    /// pg_dump invocations. One run covers "both", structure-only (`--exclude-table-data`) and skipped (`-T`)
+    /// tables; data-only tables need a second `--data-only` run (the first run leaves them out with `-T`).
+    static func postgresInvocations(database: String, options o: ExportOptions, connection: [String]) -> [[String]] {
+        let modes = o.tableModes
+        func members(_ m: TableExportMode) -> [String] {
+            let names = modes.filter { $0.value == m }.map(\.key).sorted()
+            guard let universe = o.tables else { return names }
+            return names.filter(universe.contains)
+        }
+        let structure = members(.structureOnly), dataOnly = members(.dataOnly), skipped = members(.skip)
+        var main = connection + ["--verbose", "--no-password"]
         switch o.scope {
-        case .structureOnly: a.append("--schema-only")
-        case .dataOnly: a.append("--data-only")
+        case .structureOnly: main.append("--schema-only")
+        case .dataOnly: main.append("--data-only")
         case .structureAndData: break
         }
-        if o.addDropTable && o.scope != .dataOnly { a += ["--clean", "--if-exists"] }
-        if !o.extendedInserts { a.append("--inserts") }
-        for t in o.tables ?? [] { a += ["-t", t] }
-        a.append(database)
-        return a
+        if o.addDropTable && o.scope != .dataOnly { main += ["--clean", "--if-exists"] }
+        if !o.extendedInserts { main.append("--inserts") }
+        let excluded = Set(skipped + dataOnly)
+        if let tables = o.tables {
+            for t in tables where !excluded.contains(t) { main += ["-t", t] }
+        }
+        for t in excluded.sorted() { main += ["-T", t] }
+        if o.scope != .dataOnly, o.scope != .structureOnly { for t in structure { main.append("--exclude-table-data=\(t)") } }
+        var runs: [[String]] = []
+        let mainHasTables = o.tables.map { !$0.filter { !excluded.contains($0) }.isEmpty } ?? true
+        if mainHasTables { runs.append(main + [database]) }
+        if !dataOnly.isEmpty {
+            var data = connection + ["--verbose", "--no-password", "--data-only"]
+            if !o.extendedInserts { data.append("--inserts") }
+            for t in dataOnly { data += ["-t", t] }
+            runs.append(data + [database])
+        }
+        return runs
     }
 
     // MARK: Local
@@ -375,11 +444,14 @@ public enum ExportPlanner {
             }
         case .postgresql:
             guard tool.flavour == .postgres else { throw ExportPlanError.toolRequired("\(tool.name) can't dump a PostgreSQL database.") }
-            let args = postgresArguments(database: target.database, options: o,
-                                         connection: ["--host=\(host)", "--port=\(port)", "--username=\(target.user)"]) + extraArguments
-            steps.append(CommandStep(
-                label: "Dump \(target.database)", executable: tool.path, arguments: args,
-                environment: target.password.map { ["PGPASSWORD": $0] } ?? [:], standardInput: nil, secretFiles: [], usesSSH: false))
+            let runs = postgresInvocations(database: target.database, options: o,
+                                           connection: ["--host=\(host)", "--port=\(port)", "--username=\(target.user)"])
+            for (i, args) in runs.enumerated() {
+                steps.append(CommandStep(
+                    label: i == 0 ? "Dump \(target.database)" : "Dump \(target.database) data only", executable: tool.path,
+                    arguments: args + extraArguments,
+                    environment: target.password.map { ["PGPASSWORD": $0] } ?? [:], standardInput: nil, secretFiles: [], usesSSH: false))
+            }
         }
         return ExportPlan(steps: steps, displayCommand: "", outputFilename: "", location: .localThroughTunnel, engine: target.engine,
                           remoteCompressed: false, outputCompressed: false, collation: nil, localStages: [], tables: nil,
@@ -437,10 +509,11 @@ public enum ExportPlanner {
             s += "cat > \"$QW_T/pgpass\" <<'\(delim)'\n\(line)\(delim)\n"
             s += "PGPASSFILE=\"$QW_T/pgpass\"; export PGPASSFILE\n"
             s += "command -v pg_dump >/dev/null 2>&1 || { echo 'qw: pg_dump was not found on the server' >&2; exit 127; }\n"
-            let args = postgresArguments(
+            let runs = postgresInvocations(
                 database: target.database, options: o,
                 connection: ["--host=\(target.remoteEndpoint.host)", "--port=\(target.remoteEndpoint.port)", "--username=\(target.user)"])
-            s += "( pg_dump \(ShellQuoting.posix(args)) </dev/null; echo $? > \"$QW_T/rc\" )\(gz)\n"
+            let calls = runs.map { "pg_dump \(ShellQuoting.posix($0)) </dev/null" }
+            s += "( ( \(calls.joined(separator: " && ")) ); echo $? > \"$QW_T/rc\" )\(gz)\n"
         }
         // The pipeline status is gzip's; the dump tool's status is in rc.
         s += o.gzip ? "QW_G=$?\n" : "QW_G=0\n"

@@ -383,3 +383,102 @@ struct RemoteScriptTests {
         #expect((try FileManager.default.contentsOfDirectory(atPath: box.tmp.path)).isEmpty)
     }
 }
+
+@Suite("Per-table export modes")
+struct TableModeTests {
+    private func localSteps(_ o: ExportOptions) throws -> [[String]] {
+        try plan(target(ssh: nil), o, tool: localTool("mysqldump", .mysql)).steps.map { $0.arguments.filter { !$0.hasPrefix("--defaults-extra-file") && !$0.hasPrefix("--host") && !$0.hasPrefix("--port") && $0 != "--protocol=tcp" } }
+    }
+
+    @Test func noModesIsTheUnchangedSingleDump() throws {
+        let steps = try localSteps(ExportOptions(location: .localThroughTunnel))
+        #expect(steps.count == 1)
+        #expect(steps[0].suffix(1) == ["wp_db"])
+    }
+
+    @Test func skippedTablesAreIgnoredInTheMainInvocation() throws {
+        let steps = try localSteps(ExportOptions(location: .localThroughTunnel, tableModes: ["wp_wfhits": .skip, "wp_wflogins": .skip]))
+        #expect(steps.count == 1)
+        #expect(steps[0].contains("--ignore-table=wp_db.wp_wfhits") && steps[0].contains("--ignore-table=wp_db.wp_wflogins"))
+        #expect(steps[0].suffix(1) == ["wp_db"])
+    }
+
+    @Test func structureOnlyAndDataOnlyGroupsBecomeTheirOwnInvocations() throws {
+        let o = ExportOptions(includeRoutines: true, location: .localThroughTunnel, tableModes: [
+            "wp_wfhits": .structureOnly, "wp_wflogins": .structureOnly, "wp_usermeta": .dataOnly, "wp_junk": .skip])
+        let steps = try localSteps(o)
+        #expect(steps.count == 3)
+        let main = steps[0], structure = steps[1], data = steps[2]
+        #expect(main.contains("--routines"))
+        #expect(!structure.contains("--routines") && !data.contains("--routines"), "routines only in the first invocation")
+        #expect(["--ignore-table=wp_db.wp_junk", "--ignore-table=wp_db.wp_usermeta", "--ignore-table=wp_db.wp_wfhits", "--ignore-table=wp_db.wp_wflogins"].allSatisfy(main.contains))
+        #expect(structure.contains("--no-data") && structure.suffix(3) == ["wp_db", "wp_wfhits", "wp_wflogins"])
+        #expect(data.contains("--no-create-info") && data.suffix(2) == ["wp_db", "wp_usermeta"])
+        #expect(!main.contains("--no-data") && !main.contains("--no-create-info"))
+    }
+
+    @Test func explicitTableListIsSplitByMode() throws {
+        let o = ExportOptions(tables: ["a", "b", "c", "d"], location: .localThroughTunnel, tableModes: ["b": .skip, "c": .structureOnly, "zzz": .dataOnly])
+        let steps = try localSteps(o)
+        #expect(steps.count == 2)
+        #expect(steps[0].suffix(3) == ["wp_db", "a", "d"])
+        #expect(steps[1].contains("--no-data") && steps[1].suffix(2) == ["wp_db", "c"])
+    }
+
+    @Test func everythingStructureOnlyDropsTheMainInvocation() throws {
+        let o = ExportOptions(tables: ["a", "b"], location: .localThroughTunnel, tableModes: ["a": .structureOnly, "b": .structureOnly])
+        let steps = try localSteps(o)
+        #expect(steps.count == 1 && steps[0].contains("--no-data"))
+    }
+
+    @Test func transientSplitStillAppliesToTheMainGroup() throws {
+        let o = ExportOptions(skipWordPressTransients: true, optionsTables: ["wp_options"], location: .localThroughTunnel,
+                              tableModes: ["wp_wfhits": .structureOnly])
+        let steps = try localSteps(o)
+        #expect(steps.count == 3)
+        #expect(steps[0].contains("--ignore-table=wp_db.wp_options") && steps[0].contains("--ignore-table=wp_db.wp_wfhits"))
+        #expect(steps[1].contains("--where=\(ExportPlanner.transientWhere)") && steps[1].suffix(2) == ["wp_db", "wp_options"])
+        #expect(steps[2].contains("--no-data"))
+    }
+
+    @Test func skippedOptionsTableGetsNoTransientInvocation() throws {
+        let o = ExportOptions(skipWordPressTransients: true, optionsTables: ["wp_options"], location: .localThroughTunnel, tableModes: ["wp_options": .skip])
+        let steps = try localSteps(o)
+        #expect(steps.count == 1)
+        #expect(!steps.joined().contains { $0.hasPrefix("--where") })
+    }
+
+    @Test func remoteScriptShowsEveryInvocationAndStaysRedacted() throws {
+        let o = ExportOptions(tableModes: ["wp_wfhits": .structureOnly, "wp_junk": .skip])
+        let p = try plan(target(), o)
+        #expect(p.displayCommand.contains("--no-data wp_db wp_wfhits"))
+        #expect(p.displayCommand.contains("--ignore-table=wp_db.wp_junk"))
+        #expect(p.displayCommand.contains("&&"))
+        #expect(!p.displayCommand.contains("s3cr3t"))
+    }
+
+    @Test func postgresUsesOneRunWithExcludeTableData() throws {
+        let o = ExportOptions(location: .localThroughTunnel, tableModes: ["wfhits": .structureOnly, "junk": .skip])
+        let p = try plan(target(engine: .postgresql, ssh: nil), o, tool: localTool("pg_dump", .postgres))
+        #expect(p.steps.count == 1)
+        let args = p.steps[0].arguments
+        #expect(args.contains("--exclude-table-data=wfhits"))
+        #expect(args.starts(with: ["--host=127.0.0.1"]))
+        #expect(zip(args, args.dropFirst()).contains { $0 == "-T" && $1 == "junk" })
+    }
+
+    @Test func postgresDataOnlyTablesGetASecondRun() throws {
+        let o = ExportOptions(location: .localThroughTunnel, tableModes: ["meta": .dataOnly])
+        let p = try plan(target(engine: .postgresql, ssh: nil), o, tool: localTool("pg_dump", .postgres))
+        #expect(p.steps.count == 2)
+        #expect(zip(p.steps[0].arguments, p.steps[0].arguments.dropFirst()).contains { $0 == "-T" && $1 == "meta" })
+        #expect(p.steps[1].arguments.contains("--data-only") && p.steps[1].arguments.contains("meta"))
+    }
+
+    @Test func postgresRemoteScriptJoinsRuns() throws {
+        let o = ExportOptions(tableModes: ["meta": .dataOnly])
+        let script = try ExportPlanner.remoteScript(target: target(engine: .postgresql), options: o, redactPassword: true)
+        #expect(script.components(separatedBy: "</dev/null").count == 3)
+        #expect(script.contains("&&"))
+    }
+}
