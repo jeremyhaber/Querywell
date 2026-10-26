@@ -1,0 +1,58 @@
+# Integration-test servers. Brought up by scripts/integration.sh; ports chosen to avoid local installs.
+name: querywell-test
+services:
+  mysql8:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root_pw
+      MYSQL_DATABASE: querywell_test
+      MYSQL_USER: querywell
+      MYSQL_PASSWORD: querywell_pw
+    ports: ["13306:3306"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot_pw"]
+      interval: 3s
+      retries: 40
+
+  mariadb11:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: root_pw
+      MARIADB_DATABASE: querywell_test
+      MARIADB_USER: querywell
+      MARIADB_PASSWORD: querywell_pw
+    ports: ["13307:3306"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      retries: 40
+
+  postgres16:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: querywell
+      POSTGRES_PASSWORD: querywell_pw
+      POSTGRES_DB: querywell_test
+    # Self-signed snakeoil cert ships in the Debian image; enables TLS tests.
+    command: >
+      -c ssl=on
+      -c ssl_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem
+      -c ssl_key_file=/etc/ssl/private/ssl-cert-snakeoil.key
+    ports: ["15432:5432"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "querywell", "-d", "querywell_test"]
+      interval: 3s
+      retries: 40
+
+  # SSH bastion that can reach the databases by service name (e.g. mysql8:3306).
+  # User querywell / password querywell_ssh_pw; authorized_keys mounted from build/test-ssh (generated per machine).
+  sshd:
+    build: docker/ssh
+    ports: ["12222:22"]
+    volumes:
+      - ./build/test-ssh/authorized_keys:/keys/authorized_keys:ro
+    depends_on: [mysql8, mariadb11, postgres16]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "22"]
+      interval: 2s
+      retries: 30
