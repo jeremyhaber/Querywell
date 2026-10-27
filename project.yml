@@ -34,7 +34,7 @@ targets:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSApplicationCategoryType: public.app-category.developer-tools
-        NSHumanReadableCopyright: "Copyright © 2026 Jeremy Haber. All rights reserved."
+        NSHumanReadableCopyright: "Copyright © 2026 Jeremy Haber. MIT License."
         LSMinimumSystemVersion: "14.0"
     entitlements:
       path: App/Resources/Querywell.entitlements

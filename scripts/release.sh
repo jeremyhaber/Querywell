@@ -8,7 +8,7 @@ cd "$ROOT"
 
 usage() {
   cat <<'EOF'
-usage: scripts/release.sh [--dry-run] [--no-notarize] [--skip-tests] [-h|--help]
+usage: scripts/release.sh [--dry-run] [--no-notarize] [--ad-hoc] [--skip-tests] [-h|--help]
 
 Builds, signs (Developer ID, hardened runtime, secure timestamp), notarizes and staples Querywell,
 then packages Querywell-<version>.dmg and .zip with SHA-256 checksums in build/release/.
@@ -18,12 +18,15 @@ Options
                    no keychain identity or notary profile is required.
   --no-notarize    Local signed build: skip notarization/stapling and the Gatekeeper checks.
                    (QUERYWELL_NOTARY_PROFILE not needed.)
+  --ad-hoc         Ad-hoc signed build for publishing without a paid Apple Developer account:
+                   no certificate, team ID or notarization. Gatekeeper blocks the first launch
+                   on other Macs (System Settings > Privacy & Security > Open Anyway).
   --skip-tests     Skip scripts/ci.sh --skip-integration before archiving.
   --verify-only APP
                    Only run the signature verification on an existing .app (needs QUERYWELL_TEAM_ID).
 
 Environment
-  QUERYWELL_TEAM_ID          (required) 10-character Apple Developer Team ID, e.g. ABCDE12345.
+  QUERYWELL_TEAM_ID          (required unless --ad-hoc) 10-character Apple Developer Team ID, e.g. ABCDE12345.
   QUERYWELL_SIGN_IDENTITY    Certificate name prefix. Default: "Developer ID Application".
                              The keychain must hold a matching identity for the team, i.e.
                              "Developer ID Application: Your Name (TEAMID)".
@@ -39,12 +42,14 @@ EOF
 
 DRY_RUN=0
 NOTARIZE=1
+AD_HOC=0
 RUN_TESTS=1
 VERIFY_ONLY=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --no-notarize) NOTARIZE=0 ;;
+    --ad-hoc) AD_HOC=1; NOTARIZE=0 ;;
     --skip-tests) RUN_TESTS=0 ;;
     --verify-only) shift; VERIFY_ONLY="${1:-}"; [ -n "$VERIFY_ONLY" ] || { echo "error: --verify-only needs an .app path" >&2; exit 2; } ;;
     -h|--help) usage; exit 0 ;;
@@ -76,9 +81,14 @@ run_logged() {
 
 # ---------------------------------------------------------------- configuration
 TEAM="${QUERYWELL_TEAM_ID:-}"
-[ -n "$TEAM" ] || die "QUERYWELL_TEAM_ID is required (your 10-character Apple Developer Team ID). See --help."
-[[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || die "QUERYWELL_TEAM_ID '$TEAM' is not a 10-character Team ID (A-Z, 0-9)."
-IDENTITY_PREFIX="${QUERYWELL_SIGN_IDENTITY:-Developer ID Application}"
+if [ "$AD_HOC" -eq 1 ]; then
+  TEAM=""
+  IDENTITY_PREFIX="-"
+else
+  [ -n "$TEAM" ] || die "QUERYWELL_TEAM_ID is required (your 10-character Apple Developer Team ID), or pass --ad-hoc. See --help."
+  [[ "$TEAM" =~ ^[A-Z0-9]{10}$ ]] || die "QUERYWELL_TEAM_ID '$TEAM' is not a 10-character Team ID (A-Z, 0-9)."
+  IDENTITY_PREFIX="${QUERYWELL_SIGN_IDENTITY:-Developer ID Application}"
+fi
 NOTARY_PROFILE="${QUERYWELL_NOTARY_PROFILE:-}"
 
 VERSION="${QUERYWELL_VERSION:-$(scripts/bump-version.sh --show | sed 's/ (.*//')}"
@@ -97,7 +107,8 @@ LOGS="$OUT/logs"
 IDENTITY="$IDENTITY_PREFIX"   # resolved to the exact keychain identity during preflight
 
 # ---------------------------------------------------------------- verification
-# Every Mach-O in the bundle must carry our team ID, hardened runtime and a secure timestamp.
+# Every Mach-O in the bundle must carry our team ID, hardened runtime and a secure timestamp
+# (ad-hoc builds: an ad-hoc signature and hardened runtime; there is no team or timestamp).
 verify_signing() {
   local app="$1"
   step "Verify signatures"
@@ -132,11 +143,17 @@ $unexpected
     count=$((count + 1))
     info="$(codesign -dv --verbose=4 "$f" 2>&1 || true)"
     local rel="${f#"$app"/}"
-    if ! printf '%s\n' "$info" | grep -q "^TeamIdentifier=$TEAM$"; then
-      echo "  FAIL $rel: TeamIdentifier is not $TEAM" >&2; failures=$((failures + 1))
-    fi
     if ! printf '%s\n' "$info" | grep -E '^CodeDirectory .*flags=' | grep -q 'runtime'; then
       echo "  FAIL $rel: hardened runtime flag missing" >&2; failures=$((failures + 1))
+    fi
+    if [ "$AD_HOC" -eq 1 ]; then
+      if ! printf '%s\n' "$info" | grep -q '^Signature=adhoc$'; then
+        echo "  FAIL $rel: not ad-hoc signed" >&2; failures=$((failures + 1))
+      fi
+      continue
+    fi
+    if ! printf '%s\n' "$info" | grep -q "^TeamIdentifier=$TEAM$"; then
+      echo "  FAIL $rel: TeamIdentifier is not $TEAM" >&2; failures=$((failures + 1))
     fi
     if ! printf '%s\n' "$info" | grep -q '^Timestamp='; then
       echo "  FAIL $rel: no secure timestamp" >&2; failures=$((failures + 1))
@@ -144,7 +161,11 @@ $unexpected
   done < <(find "$app" -type f)
   [ "$count" -gt 0 ] || die "found no Mach-O files in $app"
   [ "$failures" -eq 0 ] || die "$failures signing problem(s) in $count Mach-O file(s); see above."
-  echo "  $count Mach-O file(s): team $TEAM, hardened runtime, secure timestamp: ok"
+  if [ "$AD_HOC" -eq 1 ]; then
+    echo "  $count Mach-O file(s): ad-hoc signature, hardened runtime: ok"
+  else
+    echo "  $count Mach-O file(s): team $TEAM, hardened runtime, secure timestamp: ok"
+  fi
 }
 
 if [ -n "$VERIFY_ONLY" ]; then
@@ -155,12 +176,16 @@ fi
 
 # ---------------------------------------------------------------- preflight
 step "Preflight"
-echo "  team $TEAM, identity prefix \"$IDENTITY_PREFIX\", version $VERSION ($BUILD)"
-echo "  dry-run: $DRY_RUN, notarize: $NOTARIZE, tests: $RUN_TESTS"
+echo "  team ${TEAM:-none}, identity prefix \"$IDENTITY_PREFIX\", version $VERSION ($BUILD)"
+echo "  dry-run: $DRY_RUN, ad-hoc: $AD_HOC, notarize: $NOTARIZE, tests: $RUN_TESTS"
 
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "  (dry run: skipping Xcode / xcodegen / keychain identity / notary profile checks)"
-  IDENTITY="$IDENTITY_PREFIX: <name> ($TEAM)"
+  [ "$AD_HOC" -eq 1 ] || IDENTITY="$IDENTITY_PREFIX: <name> ($TEAM)"
+elif [ "$AD_HOC" -eq 1 ]; then
+  xcodebuild -version >/dev/null 2>&1 || die "Xcode command line tools not found. Install Xcode 26 and run: sudo xcode-select -s /Applications/Xcode.app"
+  command -v xcodegen >/dev/null 2>&1 || die "xcodegen not found. Install with: brew install xcodegen"
+  echo "  signing identity: - (ad-hoc)"
 else
   xcodebuild -version >/dev/null 2>&1 || die "Xcode command line tools not found. Install Xcode 26 and run: sudo xcode-select -s /Applications/Xcode.app"
   command -v xcodegen >/dev/null 2>&1 || die "xcodegen not found. Install with: brew install xcodegen"
@@ -208,16 +233,36 @@ else
 fi
 
 # ---------------------------------------------------------------- archive + export
-step "Archive (Release, Developer ID, hardened runtime)"
 VERSION_SETTINGS=("MARKETING_VERSION=$VERSION" "CURRENT_PROJECT_VERSION=$BUILD")
+if [ "$AD_HOC" -eq 1 ]; then
+  step "Archive (Release, ad-hoc, hardened runtime)"
+  SIGN_SETTINGS=(CODE_SIGN_STYLE=Manual "DEVELOPMENT_TEAM=" "CODE_SIGN_IDENTITY=-")
+else
+  step "Archive (Release, Developer ID, hardened runtime)"
+  SIGN_SETTINGS=(CODE_SIGN_STYLE=Manual "DEVELOPMENT_TEAM=$TEAM" "CODE_SIGN_IDENTITY=$IDENTITY" "OTHER_CODE_SIGN_FLAGS=--timestamp")
+fi
 run_logged "$LOGS/archive.log" xcodebuild archive \
   -project Querywell.xcodeproj -scheme Querywell -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$ARCHIVE" -derivedDataPath "$OUT/DerivedData" \
-  CODE_SIGN_STYLE=Manual "DEVELOPMENT_TEAM=$TEAM" "CODE_SIGN_IDENTITY=$IDENTITY" \
-  ENABLE_HARDENED_RUNTIME=YES "OTHER_CODE_SIGN_FLAGS=--timestamp" \
+  "${SIGN_SETTINGS[@]}" ENABLE_HARDENED_RUNTIME=YES \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   LM_SKIP_METADATA_EXTRACTION=YES "${VERSION_SETTINGS[@]}"
+
+if [ "$AD_HOC" -eq 1 ]; then
+  # -exportArchive needs a real certificate; the archived app is already signed ad-hoc.
+  step "Copy app from archive (ad-hoc)"
+  run mkdir -p "$EXPORT"
+  run ditto "$ARCHIVE/Products/Applications/Querywell.app" "$APP"
+  # Xcode copies some Swift runtime dylibs without the hardened runtime flag (the developer-id export
+  # re-signs them); re-sign nested code inside-out, then the app with its entitlements.
+  if [ -d "$APP/Contents/Frameworks" ]; then
+    while IFS= read -r f; do
+      run codesign --force --sign - --options runtime "$f"
+    done < <(find "$APP/Contents/Frameworks" -depth \( -name '*.dylib' -o -name '*.framework' \) -print)
+  fi
+  run codesign --force --sign - --options runtime --entitlements App/Resources/Querywell.entitlements "$APP"
+else
 
 step "Export (developer-id)"
 echo "+ write $OPTIONS_PLIST"
@@ -236,6 +281,7 @@ OPTIONS_XML="<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 if [ "$DRY_RUN" -eq 1 ]; then printf '%s\n' "$OPTIONS_XML" | sed 's/^/    | /'; else printf '%s\n' "$OPTIONS_XML" > "$OPTIONS_PLIST"; fi
 run_logged "$LOGS/export.log" xcodebuild -exportArchive \
   -archivePath "$ARCHIVE" -exportOptionsPlist "$OPTIONS_PLIST" -exportPath "$EXPORT"
+fi
 
 verify_signing "$APP"
 
@@ -277,7 +323,7 @@ run ditto "$APP" "$STAGE/Querywell.app"
 run ln -s /Applications "$STAGE/Applications"
 run hdiutil create -volname "Querywell $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG"
 run rm -rf "$STAGE"
-run codesign --sign "$IDENTITY" --timestamp "$DMG"
+if [ "$AD_HOC" -eq 1 ]; then run codesign --sign - "$DMG"; else run codesign --sign "$IDENTITY" --timestamp "$DMG"; fi
 run codesign --verify --verbose=2 "$DMG"
 run ditto -c -k --keepParent "$APP" "$ZIP"
 
@@ -307,5 +353,6 @@ if [ "$DRY_RUN" -eq 1 ]; then
   echo "Dry run only; nothing was executed. Outputs would be in $OUT"
 else
   echo "Release $VERSION ($BUILD) artifacts in $OUT"
-  [ "$NOTARIZE" -eq 1 ] || echo "NOTE: not notarized (--no-notarize)."
+  if [ "$AD_HOC" -eq 1 ]; then echo "NOTE: ad-hoc signed and not notarized (--ad-hoc)."
+  elif [ "$NOTARIZE" -eq 0 ]; then echo "NOTE: not notarized (--no-notarize)."; fi
 fi

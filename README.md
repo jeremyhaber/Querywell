@@ -1,5 +1,9 @@
 # Querywell
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Platform: macOS 14+](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)
+![Swift 6](https://img.shields.io/badge/Swift-6-orange)
+
 Querywell is a native macOS database client for MySQL, MariaDB and PostgreSQL, built with Swift 6, SwiftUI and AppKit. It is designed for people who live in their databases every day (WordPress and web-app work in particular): fast table browsing, safe inline editing that always goes through a review step, a proper query editor, serialization-aware search and replace, and import/export that copes with real-world dumps. It runs the system `ssh`, `mysqldump` and `pg_dump`, so it is distributed outside the Mac App Store and is not sandboxed.
 
 ![Connections launcher](docs/screenshots/launcher.png)
@@ -13,12 +17,15 @@ Querywell is a native macOS database client for MySQL, MariaDB and PostgreSQL, b
 - All secrets (DB and SSH passwords, passphrases, AI keys) live in the macOS Keychain only.
 
 **Windows, tabs and quick open**
-- One window per connection, with an in-window tab strip (table, query, console, terminal tabs).
+- One window per connection (or per database), with an in-window tab strip for table, query, console, terminal and health tabs.
+- Preview tabs for single clicks (`⌘`-click opens a new tab), tab colours, *Keep* / *Close Others* / *Close to the Right*, and an overflow strip with an *All tabs* menu.
+- Every tagged window carries its connection colour, so a Production window is hard to mistake for Local.
 - `⌘K` quick open: fuzzy-jump to tables, saved queries and actions.
 
 **Table browser, filters and inline editing**
-- Schema sidebar with database picker, fuzzy table filter, row estimates, views and routines.
-- Virtualized data grid with type-aware headers, PK/FK markers, FK navigation, paging with exact or estimated counts, Structure / Indexes / Relations views and a row inspector.
+- Schema sidebar with a fuzzy database picker, fuzzy table filter, row estimates, views and routines. Create and drop databases (charset/collation, Postgres owner/encoding/template).
+- Virtualized data grid with type-aware headers, PK/FK markers, FK navigation, keyset paging that stays fast on million-row tables, exact or estimated counts, a Stop button that aborts the running statement, Structure / Indexes / Relations views and a row inspector.
+- Operations view per table: rename/move, comment, engine, collation, `AUTO_INCREMENT`, row format, copy, analyze/check/optimize/repair (Postgres `ANALYZE` / `VACUUM` / `REINDEX`), empty and drop. A Triggers view lists, creates, edits and drops triggers.
 - Column filters with chips, saved filters, a WHERE bar with autocomplete, and *Show as SQL*.
 - Inline editing with insert, duplicate and delete. Changes stay pending until you press **Review**, which shows the exact SQL; commits are transactional with optimistic concurrency and conflict handling.
 - Batch operations on selected tables: change storage engine, convert charset/collation.
@@ -27,13 +34,17 @@ Querywell is a native macOS database client for MySQL, MariaDB and PostgreSQL, b
 
 ![Reviewing changes before commit](docs/screenshots/edit-review.png)
 
+**Health and Doctor**
+- A per-connection health tab with server metrics (connections, buffer pool / cache hit ratio, queries per second, slow queries, deadlocks, largest tables, tables without a primary key, unused indexes) and a Doctor that recommends settings for the server's RAM and workload.
+- Apply a recommendation with `SET PERSIST` / `SET GLOBAL` / `ALTER SYSTEM` (through the write guard), ignore it, or copy a `my.cnf` / `postgresql.conf` snippet. Every change is recorded in a revision history with one-click revert and drift detection.
+
 **PROD safety**
 - Production connections show a PROD badge, and every write (grid edits, queries, imports, DDL, search and replace) needs confirmation with a dry-run impact count and the typed database name. Read-only mode is a separate per-connection switch. See [Safety model](#safety-model).
 
 **Query editor, history, saved queries and AI builder**
 - In-house TextKit 2 SQL editor: highlighting, line numbers, bracket matching, autocomplete, snippets, formatter, error markers, Explain plan view, multiple result tabs and Messages.
 - Run the selection or everything with `⌘↵`, the statement under the cursor with `⇧⌘↵`. Results of single-table queries with a key are editable through the same Review flow.
-- Per-connection history (bounded), saved queries and snippets.
+- Per-connection history (bounded), saved queries, snippets, a *Quick queries* menu and a Schema browser (tables and columns) in the sidebar.
 - AI query builder (`⇧⌘A`) with Anthropic, OpenAI or OpenRouter keys. It sends **schema only** by default and can only insert text into the editor; it never runs anything.
 
 ![Query editor with AI assistant](docs/screenshots/query-ai.png)
@@ -67,7 +78,20 @@ Dark mode is fully supported.
 
 ## Install
 
-Download `Querywell-<version>.dmg` from the releases, open it and drag **Querywell** to **Applications**. The app is signed with a Developer ID certificate and notarized by Apple. Verify the download with `SHA256SUMS.txt`.
+Download `Querywell-<version>.dmg` from the [latest release](https://github.com/jeremyhaber/Querywell/releases/latest), open it and drag **Querywell** to **Applications**. Verify the download against `SHA256SUMS.txt`:
+
+    shasum -a 256 -c SHA256SUMS.txt
+
+Release builds are **ad-hoc signed and not notarized** (the project doesn't have a paid Apple Developer account), so macOS blocks the first launch:
+
+1. Open Querywell once. macOS says it can't verify the developer; click **Done**.
+2. Open **System Settings > Privacy & Security**, scroll to *Security*, and click **Open Anyway** next to the Querywell message. Confirm with your password.
+
+After that it opens normally. Alternatively, remove the quarantine flag from Terminal:
+
+    xattr -dr com.apple.quarantine /Applications/Querywell.app
+
+If you'd rather not trust a downloaded binary, [build from source](#build-from-source).
 
 ## Build from source
 
@@ -90,7 +114,12 @@ The Xcode project is generated from `project.yml` and is not committed.
 
 ## Release
 
-`scripts/release.sh` produces a Developer ID signed, hardened-runtime, notarized and stapled `Querywell-<version>.dmg` and `.zip` plus `SHA256SUMS.txt` in `build/release/`.
+Published releases are built with `scripts/release.sh --ad-hoc`, which needs no Apple Developer account: it archives a universal Release build, signs it ad-hoc with the hardened runtime, verifies the signatures and entitlements, and writes `Querywell-<version>.dmg`, `.zip` and `SHA256SUMS.txt` to `build/release/`.
+
+    scripts/bump-version.sh 1.0.1            # optional; edits project.yml (version, build + 1)
+    scripts/release.sh --ad-hoc
+
+With a paid account, `scripts/release.sh` instead produces a Developer ID signed, hardened-runtime, notarized and stapled `Querywell-<version>.dmg` and `.zip` plus `SHA256SUMS.txt` in `build/release/`.
 
 One-time setup:
 
@@ -226,13 +255,19 @@ Everything is reachable without a mouse. With System Settings > Keyboard > "Keyb
 ## Known limitations
 
 - Optimistic-concurrency checks (grid edits, search and replace) compare with the column's collation on MySQL, so a concurrent change that differs only in letter case or trailing spaces is not detected as a conflict (DECISIONS #40).
-- The database drivers cannot yet abort a running statement, so Stop takes effect between statements, and very large results are loaded into memory rather than streamed. Console output is capped at 1,000 rows per result; open the rest in a grid.
+- Release builds are not notarized, so the first launch needs *Open Anyway* (see [Install](#install)).
+- The drivers buffer whole result sets, so very large query results are held in memory (the editor displays up to 50,000 rows). Console output is capped at 1,000 rows per result; open the rest in a grid.
+- Postgres import cannot rename the schema inside a `pg_dump` stream (the target-schema option applies to MySQL/MariaDB dumps).
 - PostgreSQL composite and geometric types arrive as raw bytes; zero-row SELECT results re-run as a wrapper query to learn the column names (DECISIONS #21).
 - WordPress transient skipping on export is MySQL-only; databases with two WordPress prefixes pick one.
 - Postgres collation/locale differences are not rewritten on import/export (the collation fix is MySQL/MariaDB only).
 - The terminal uses SwiftTerm 1.11.2, pinned because newer releases need the optional Xcode Metal toolchain and package plugin validation (DECISIONS #41).
 - The app icon is a placeholder.
 
+## Contributing
+
+Issues and pull requests are welcome. Please run `scripts/ci.sh` before opening a PR. It treats warnings as errors, and the Docker integration suite runs when Docker is available. Keep non-UI logic in `Packages/Core` with tests (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+
 ## License
 
-All rights reserved. License to be decided by the owner.
+Querywell is released under the [MIT License](LICENSE). Copyright © 2026 Jeremy Haber.
