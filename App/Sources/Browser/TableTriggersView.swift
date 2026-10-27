@@ -199,7 +199,7 @@ private struct TriggerEditorSheet: View {
                         ForEach(timings) { Text($0.rawValue).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 130)
+                    .frame(width: 130, alignment: .leading)
                     if model.isPostgres {
                         HStack(spacing: 10) {
                             ForEach(TriggerEvent.allCases) { event in
@@ -215,7 +215,7 @@ private struct TriggerEditorSheet: View {
                             ForEach([TriggerEvent.insert, .update, .delete]) { Text($0.rawValue).tag($0) }
                         }
                         .labelsHidden()
-                        .frame(width: 130)
+                        .frame(width: 130, alignment: .leading)
                     }
                 }
             }
@@ -227,7 +227,7 @@ private struct TriggerEditorSheet: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .frame(width: 200)
+                    .frame(width: 200, alignment: .leading)
                 }
                 labeled("WHEN") {
                     TextField("Optional condition, e.g. OLD.* IS DISTINCT FROM NEW.*", text: $model.whenCondition)
@@ -253,7 +253,7 @@ private struct TriggerEditorSheet: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 320)
+                .frame(width: 320, alignment: .leading)
                 .accessibilityLabel("Trigger function source")
                 if model.functionSource == .existing {
                     if model.functions.isEmpty {
@@ -264,7 +264,7 @@ private struct TriggerEditorSheet: View {
                             ForEach(model.functions, id: \.self) { Text($0.schema + "." + $0.name).tag(TableTriggersModel.key($0)) }
                         }
                         .labelsHidden()
-                        .frame(width: 320)
+                        .frame(width: 320, alignment: .leading)
                     }
                 } else {
                     labeled("Function name") {

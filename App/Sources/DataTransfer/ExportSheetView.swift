@@ -150,18 +150,18 @@ struct ExportSheetView: View {
                     ForEach(ExportSheetModel.CollationChoice.allCases) { Text($0.title).tag($0) }
                 }
                 .labelsHidden()
-                .frame(width: 260)
+                .frame(width: 260, alignment: .leading)
                 if model.collationChoice == .custom {
                     let charsets = model.charsets.isEmpty ? [model.customCharset] : model.charsets
                     Picker("Charset", selection: $model.customCharset) {
                         ForEach(charsets, id: \.self) { Text($0).tag($0) }
                     }
-                    .labelsHidden().frame(width: 130)
+                    .labelsHidden().frame(width: 130, alignment: .leading)
                     let options = model.collations(forCharset: model.customCharset)
                     Picker("Collation", selection: $model.customCollation) {
                         ForEach(options.isEmpty ? [model.customCollation] : options, id: \.self) { Text($0).tag($0) }
                     }
-                    .labelsHidden().frame(width: 190)
+                    .labelsHidden().frame(width: 190, alignment: .leading)
                 }
                 Spacer(minLength: 0)
             }

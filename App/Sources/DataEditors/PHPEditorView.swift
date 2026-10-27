@@ -46,7 +46,7 @@ struct PHPEditorView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 130)
+            .frame(width: 130, alignment: .leading)
             .disabled(!model.isValid)
             .accessibilityLabel("PHP view")
             if model.pane == .raw || !model.isValid {
@@ -56,7 +56,7 @@ struct PHPEditorView: View {
             Spacer()
         }
         .controlSize(.small)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .background(Theme.chrome)
     }

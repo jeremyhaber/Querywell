@@ -136,7 +136,7 @@ struct ImportSheetView: View {
                             Text("Legacy utf8mb4_unicode_ci").tag(ImportSheetModel.CollationChoice.legacy)
                             Text("Custom…").tag(ImportSheetModel.CollationChoice.custom)
                         }
-                        .labelsHidden().frame(width: 300)
+                        .labelsHidden().frame(width: 300, alignment: .leading)
                         if model.collationChoice == .custom {
                             TextField("charset", text: $model.customCharset).textFieldStyle(.roundedBorder).frame(width: 110)
                             TextField("collation", text: $model.customCollation).textFieldStyle(.roundedBorder).frame(width: 170)

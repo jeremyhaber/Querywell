@@ -33,7 +33,7 @@ struct ExplainPlanView: View {
                 Text("Outline").tag(false)
                 Text("Raw").tag(true)
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+            .pickerStyle(.segmented).labelsHidden().frame(width: 150, alignment: .leading)
             Toggle("Analyze", isOn: $model.explainAnalyze)
                 .toggleStyle(.checkbox)
                 .disabled(!statementIsRead)

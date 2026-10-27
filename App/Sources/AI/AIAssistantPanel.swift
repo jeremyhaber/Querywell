@@ -6,7 +6,7 @@ struct AIAssistantPanel: View {
     @Bindable var model: AIAssistantModel
     var onClose: () -> Void
     @Environment(\.openSettings) private var openSettings
-    @FocusState.Binding var promptFocused: Bool
+    @Binding var promptFocused: Bool
     @State private var showPrivacy = false
 
     private var config: AIConfiguration { model.configuration }
@@ -201,7 +201,7 @@ struct AIAssistantPanel: View {
             PlaceholderTextEditor(
                 text: $model.prompt,
                 placeholder: "Describe the query you need…",
-                isFocused: Binding(get: { promptFocused }, set: { promptFocused = $0 }),
+                isFocused: $promptFocused,
                 onCommandReturn: { model.generate() }
             )
             .frame(height: 44)

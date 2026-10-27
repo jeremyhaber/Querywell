@@ -27,7 +27,7 @@ struct EditorBanner: View {
                 Button(actionTitle, action: action).controlSize(.small)
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(style == .error ? Theme.dangerBackground : Theme.accentSubtleBackground)
         .overlay(alignment: .bottom) { Theme.separator.frame(height: 1) }
@@ -61,7 +61,7 @@ struct JSONEditorView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 130)
+            .frame(width: 130, alignment: .leading)
             .accessibilityLabel("JSON view")
 
             Button { model.prettyPrint() } label: { Label("Pretty-print", systemImage: "text.alignleft") }
@@ -84,7 +84,7 @@ struct JSONEditorView: View {
             }
         }
         .controlSize(.small)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .background(Theme.chrome)
     }

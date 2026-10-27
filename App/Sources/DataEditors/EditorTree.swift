@@ -186,7 +186,7 @@ struct EditorTreeView: View {
                     Spacer()
                     Button("Dismiss") { errorMessage = nil }.controlSize(.small)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 6)
                 .background(Theme.dangerBackground)
                 .accessibilityElement(children: .combine)
@@ -219,16 +219,16 @@ struct EditorTreeView: View {
             }
             Spacer()
             if let summary { Text(summary).font(.system(size: 11)).foregroundStyle(Theme.textTertiary) }
-            Button { actions.expandAll() } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
+            Button { actions.expandAll() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
                 .controlSize(.small)
                 .help("Expand all")
                 .accessibilityLabel("Expand all")
-            Button { actions.collapseAll() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+            Button { actions.collapseAll() } label: { Image(systemName: "arrow.down.right.and.arrow.up.left") }
                 .controlSize(.small)
                 .help("Collapse all")
                 .accessibilityLabel("Collapse all")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 16)
         .padding(.vertical, 6)
         .background(Theme.chrome)
     }

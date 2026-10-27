@@ -231,6 +231,8 @@ private struct MetricCard: View {
                     Text(detail).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
+            // Fill the grid row so cards side by side share the tallest one's height.
+            .frame(maxHeight: .infinity, alignment: .top)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(metric.title): \(metric.value). \(metric.status.label). \(metric.detail ?? "")")

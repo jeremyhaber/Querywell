@@ -7,7 +7,7 @@ struct QueryTabView: View {
     @Bindable var model: QueryTabModel
     let workspace: ConnectionWorkspace
     @Environment(AppModel.self) private var app
-    @FocusState private var promptFocused: Bool
+    @State private var promptFocused = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -17,6 +17,8 @@ struct QueryTabView: View {
                 resultsPane
                     .frame(minHeight: 150, maxHeight: .infinity)
             }
+            // Wide enough for the folded toolbar and a readable editor beside the assistant.
+            .frame(minWidth: 380)
             if model.showsAssistant {
                 Divider()
                 AIAssistantPanel(model: model.assistant, onClose: { model.showsAssistant = false }, promptFocused: $promptFocused)
@@ -99,20 +101,32 @@ struct QueryTabView: View {
                 }
                 .buttonStyle(AccentFillButtonStyle(tint: Theme.dangerFill))
                 .help("Stop: cancels the running statement on the server and skips the rest")
+                .fixedSize()
             } else {
-                runButton
+                runButton.fixedSize()
             }
-            Button("Run selection") { model.startRun(.selection) }
-                .disabled(model.isRunning || !model.hasSelection)
-                .help("Runs only the selected SQL")
-            Button("Explain") { Task { await model.explain() } }
-                .disabled(model.isRunning || !model.hasText)
-                .help("Show the query plan for the statement at the cursor (⌘E)")
-            Button("Format") { model.format() }
-                .disabled(!model.hasText)
-                .help("Tidy the SQL (⌥⌘F)")
-            quickQueriesMenu
-            Spacer(minLength: 8)
+            // Narrow tabs (assistant open, small window): secondary actions fold into a menu instead of squashing.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Button("Run selection") { model.startRun(.selection) }
+                        .disabled(model.isRunning || !model.hasSelection)
+                        .help("Runs only the selected SQL")
+                    Button("Explain") { Task { await model.explain() } }
+                        .disabled(model.isRunning || !model.hasText)
+                        .help("Show the query plan for the statement at the cursor (⌘E)")
+                    Button("Format") { model.format() }
+                        .disabled(!model.hasText)
+                        .help("Tidy the SQL (⌥⌘F)")
+                    quickQueriesMenu(compact: false)
+                }
+                .fixedSize()
+                HStack(spacing: 8) {
+                    moreActionsMenu
+                    quickQueriesMenu(compact: true)
+                }
+                .fixedSize()
+            }
+            Spacer(minLength: 0)
             Menu {
                 Button("Save Query…") { Task { await model.save() } }.keyboardShortcut("s", modifiers: .command)
                 Button("Save Query As…") {
@@ -151,7 +165,25 @@ struct QueryTabView: View {
 
     // MARK: Quick queries
 
-    private var quickQueriesMenu: some View {
+    private var moreActionsMenu: some View {
+        Menu {
+            Button("Run Selection") { model.startRun(.selection) }
+                .disabled(model.isRunning || !model.hasSelection)
+            Button("Explain") { Task { await model.explain() } }
+                .disabled(model.isRunning || !model.hasText)
+            Button("Format") { model.format() }
+                .disabled(!model.hasText)
+        } label: {
+            Image(systemName: "ellipsis")
+        }
+        .menuStyle(.button)
+        .buttonStyle(OutlineButtonStyle())
+        .fixedSize()
+        .help("Run selection, Explain, Format")
+        .accessibilityLabel("More actions")
+    }
+
+    private func quickQueriesMenu(compact: Bool) -> some View {
         let snippets = workspace.queryLibrary.allSnippets
         let target = model.quickTable.map(\.name) ?? "at cursor"
         return Menu {
@@ -185,7 +217,7 @@ struct QueryTabView: View {
                 }
             }
         } label: {
-            Text("Quick queries")
+            if compact { Image(systemName: "bolt") } else { Text("Quick queries") }
         }
         .menuStyle(.button)
         .buttonStyle(OutlineButtonStyle())
@@ -411,14 +443,15 @@ struct QueryTabView: View {
                   let schema = workspace.browser.selectedSchema ?? workspace.selectedDatabase else {
                 throw AIError.invalidResponse("Connect to a database first.")
             }
+            let cache = tab.assistantSchemaCache
             var samples: [TableRef: SampleRows]?
             if allowSamples {
-                let tables = (try? await inspector.listTables(schema: schema)) ?? []
+                let tables = (try? await cache.tables(schema: schema, using: inspector)) ?? []
                 samples = await AISampleRows.load(session: session, tables: tables, focus: prompt, dialect: SQLDialect(session.engine))
             }
             return try await AssistantContext.load(
                 from: inspector, engine: session.engine, serverVersion: session.serverInfo.versionString, schema: schema,
-                prompt: prompt, allowSampleRows: allowSamples, sampleRows: samples)
+                prompt: prompt, allowSampleRows: allowSamples, sampleRows: samples, cache: cache)
         }
         a.allowSampleRows = { app.settings.ai.includesSampleRows(for: workspace.profile.id) }
         a.setAllowSampleRows = { on in app.updateSettings { $0.ai.setIncludesSampleRows(on, for: workspace.profile.id) } }

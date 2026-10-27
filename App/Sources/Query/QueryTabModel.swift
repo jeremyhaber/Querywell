@@ -434,9 +434,13 @@ final class QueryTabModel {
         return l
     }
 
+    /// Structures the assistant has read; replaced with the catalog.
+    @ObservationIgnored private(set) var assistantSchemaCache = AssistantSchemaCache()
+
     /// Drops the cached catalog (schema refresh, reconnect). The schema sidebar reloads when `catalogVersion` changes.
     func invalidateCatalog() {
         completionLoader = nil
+        assistantSchemaCache = AssistantSchemaCache()
         knownTables = []
         tablesLoaded = false
         catalogVersion += 1

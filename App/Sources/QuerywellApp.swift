@@ -28,7 +28,7 @@ struct QuerywellApp: App {
         WindowGroup("Connection", id: "connection", for: UUID.self) { $workspaceID in
             ConnectionWindowView(workspaceID: workspaceID)
                 .environment(model)
-                .frame(minWidth: 820, minHeight: 520)
+                .frame(minWidth: 920, minHeight: 520) // sidebar 200 + query editor 380 + assistant 320 + dividers
                 .task { await model.load() }
         }
         .defaultSize(width: 1240, height: 800)

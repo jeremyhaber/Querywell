@@ -69,7 +69,7 @@ struct BatchOperationsSheet: View {
                         ForEach(model.engines.isEmpty ? [model.engine] : model.engines, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 180)
+                    .frame(width: 180, alignment: .leading)
                     .disabled(model.runState != .idle)
                 }
             case .convert:
@@ -79,7 +79,7 @@ struct BatchOperationsSheet: View {
                             ForEach(model.characterSets.isEmpty ? [model.charset] : model.characterSets, id: \.self) { Text($0).tag($0) }
                         }
                         .labelsHidden()
-                        .frame(width: 170)
+                        .frame(width: 170, alignment: .leading)
                         .disabled(model.runState != .idle)
                     }
                     labeled("Collation") {
@@ -89,7 +89,7 @@ struct BatchOperationsSheet: View {
                             ForEach(options, id: \.name) { Text($0.name + ($0.isDefault ? "  (default)" : "")).tag($0.name) }
                         }
                         .labelsHidden()
-                        .frame(width: 270)
+                        .frame(width: 270, alignment: .leading)
                         .disabled(model.runState != .idle)
                     }
                 }

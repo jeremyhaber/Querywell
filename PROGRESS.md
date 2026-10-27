@@ -150,3 +150,10 @@ Per-table Structure / Data (default both) without checkbox fatigue: rows grouped
 - **Inputs:** `PlaceholderTextEditor` fixes the assistant composer caret offset. (#80)
 - **Verified:** `scripts/ci.sh --skip-integration` PASS (Core 1171+ tests, app 191). Integration tests for table operations, triggers and health collectors were run against MySQL 8.4, MariaDB 11.4 and Postgres 16 by the agents that wrote them.
 - **Left:** Docker snapshot suites not re-run; bulk tab close prompts only for the first dirty tab; Postgres in-place database switch closes table tabs without asking; a window still connecting can be duplicated by choosing its database; Postgres table copy shares the serial sequence; MySQL data copy fails with generated columns; no real-server test creates/drops a database.
+
+## Post-v1 feedback round 2 (2026-10-26)
+
+- **Assistant:** composer no longer fights for focus (plain `@State` instead of an unattached `@FocusState`; `PlaceholderTextEditor` applies focus only when the binding changes). Schema reads are cached per query tab (`AssistantSchemaCache`, dropped with the catalog on ⌘R / reconnect) and detail is limited to the 40 most relevant tables (was 150 — most never fit the 12k summary).
+- **Settings ▸ AI:** model "Choose…" is a searchable popover — filter by words in the id/name, and by vendor for `vendor/model` ids (OpenRouter).
+- **Query tab layout:** when narrow, Run selection / Explain / Format fold into a "…" menu and Quick queries becomes an icon; toolbar buttons never compress; editor column min 380pt; connection window min width 920pt (was 820).
+- **Verified:** `scripts/ci.sh --skip-integration` PASS. Not checked by eye at small sizes; snapshot suites not re-run.

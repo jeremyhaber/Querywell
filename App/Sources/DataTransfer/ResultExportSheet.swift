@@ -41,13 +41,13 @@ struct ResultExportSheet: View {
                     Text("Delimiter").foregroundStyle(Theme.textSecondary)
                     Picker("Delimiter", selection: $model.delimiter) {
                         ForEach(ResultExportModel.Delimiter.allCases) { Text($0.title).tag($0) }
-                    }.labelsHidden().frame(width: 160)
+                    }.labelsHidden().frame(width: 160, alignment: .leading)
                 }
                 GridRow {
                     Text("NULL as").foregroundStyle(Theme.textSecondary)
                     Picker("NULL as", selection: $model.nullStyle) {
                         ForEach(ResultExportModel.NullStyle.allCases) { Text($0.title).tag($0) }
-                    }.labelsHidden().frame(width: 160)
+                    }.labelsHidden().frame(width: 160, alignment: .leading)
                 }
                 GridRow {
                     Color.clear.frame(width: 0, height: 0)
@@ -67,7 +67,7 @@ struct ResultExportSheet: View {
             Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                 GridRow {
                     Text("Table name").foregroundStyle(Theme.textSecondary)
-                    TextField("table or schema.table", text: $model.insertTable).textFieldStyle(.roundedBorder).frame(width: 240)
+                    TextField("table or schema.table", text: $model.insertTable).textFieldStyle(.roundedBorder).frame(width: 240, alignment: .leading)
                 }
                 GridRow {
                     Text("Rows per INSERT").foregroundStyle(Theme.textSecondary)

@@ -71,7 +71,7 @@ struct TableOperationsView: View {
                         ForEach(ops.schemas, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 180)
+                    .frame(width: 180, alignment: .leading)
                     Text(".").foregroundStyle(Theme.textSecondary).accessibilityHidden(true)
                     TextField("Table name", text: $ops.targetName)
                         .textFieldStyle(.roundedBorder)
@@ -124,7 +124,7 @@ struct TableOperationsView: View {
                         ForEach(ops.engines.contains(ops.engine) ? ops.engines : [ops.engine] + ops.engines, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 180)
+                    .frame(width: 180, alignment: .leading)
                 }
                 FormRow("Collation") {
                     VStack(alignment: .leading, spacing: 6) {
@@ -132,7 +132,7 @@ struct TableOperationsView: View {
                             ForEach(ops.collationNames, id: \.self) { Text($0).tag($0) }
                         }
                         .labelsHidden()
-                        .frame(width: 280)
+                        .frame(width: 280, alignment: .leading)
                         Toggle("Change all column collations", isOn: $ops.convertColumns)
                             .toggleStyle(.checkbox)
                             .font(.system(size: 13))
@@ -153,7 +153,7 @@ struct TableOperationsView: View {
                         ForEach(Self.rowFormatChoices(including: ops.rowFormat), id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 180)
+                    .frame(width: 180, alignment: .leading)
                 }
             }
         }
@@ -178,7 +178,7 @@ struct TableOperationsView: View {
                         ForEach(ops.schemas, id: \.self) { Text($0).tag($0) }
                     }
                     .labelsHidden()
-                    .frame(width: 180)
+                    .frame(width: 180, alignment: .leading)
                     Text(".").foregroundStyle(Theme.textSecondary).accessibilityHidden(true)
                     TextField("Copy name", text: $ops.copyName)
                         .textFieldStyle(.roundedBorder)
@@ -229,7 +229,7 @@ struct TableOperationsView: View {
                     ForEach(ops.availableMaintenance) { Text($0.title).tag($0) }
                 }
                 .labelsHidden()
-                .frame(width: 180)
+                .frame(width: 180, alignment: .leading)
             }
         } results: {
             if let output = ops.maintenanceOutput, !output.rows.isEmpty { MaintenanceResultTable(output: output) }

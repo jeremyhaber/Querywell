@@ -60,6 +60,7 @@ struct TableTabView: View {
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
                 Spacer(minLength: 0)
             }
             if model.hasPendingChanges {
@@ -386,19 +387,25 @@ struct TableModeControl: View {
                 Button {
                     selection = mode
                 } label: {
-                    Text(mode.rawValue)
-                        .font(.system(size: 13, weight: selection == mode ? .medium : .regular))
-                        .foregroundStyle(selection == mode ? Theme.text : Theme.chipText)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background {
-                            if selection == mode {
-                                RoundedRectangle(cornerRadius: Theme.smallRadius)
-                                    .fill(Theme.elevated)
-                                    .shadow(color: .black.opacity(0.12), radius: 1, y: 1)
-                            }
+                    // The hidden medium-weight copy reserves the selected width so tabs don't shift when selected.
+                    ZStack {
+                        Text(mode.rawValue).font(.system(size: 13, weight: .medium)).hidden()
+                        Text(mode.rawValue)
+                            .font(.system(size: 13, weight: selection == mode ? .medium : .regular))
+                            .foregroundStyle(selection == mode ? Theme.text : Theme.chipText)
+                    }
+                    .lineLimit(1)
+                    .fixedSize()
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background {
+                        if selection == mode {
+                            RoundedRectangle(cornerRadius: Theme.smallRadius)
+                                .fill(Theme.elevated)
+                                .shadow(color: .black.opacity(0.12), radius: 1, y: 1)
                         }
-                        .contentShape(Rectangle())
+                    }
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selection == mode ? .isSelected : [])
@@ -406,6 +413,7 @@ struct TableModeControl: View {
         }
         .padding(2)
         .background(Theme.chipBackground, in: RoundedRectangle(cornerRadius: Theme.controlRadius))
+        .fixedSize()
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Table view")
     }

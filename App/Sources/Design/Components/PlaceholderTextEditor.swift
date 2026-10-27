@@ -67,7 +67,10 @@ struct PlaceholderTextEditor: NSViewRepresentable {
             textView.setAccessibilityPlaceholderValue(placeholder)
             textView.needsDisplay = true
         }
-        if let isFocused, let window = textView.window {
+        // Act only when the binding changes, never on unrelated updates: re-asserting a stale value would
+        // steal focus back from a click elsewhere (or drop it mid-typing) before the async focus sync lands.
+        if let isFocused, let window = textView.window, isFocused.wrappedValue != context.coordinator.appliedFocus {
+            context.coordinator.appliedFocus = isFocused.wrappedValue
             let isFirst = window.firstResponder === textView
             if isFocused.wrappedValue, !isFirst {
                 DispatchQueue.main.async { window.makeFirstResponder(textView) }
@@ -80,6 +83,8 @@ struct PlaceholderTextEditor: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: PlaceholderTextEditor
+        /// The focus value last applied to or reported by AppKit.
+        var appliedFocus: Bool?
         init(_ parent: PlaceholderTextEditor) { self.parent = parent }
 
         func textDidChange(_ notification: Notification) {
@@ -89,6 +94,7 @@ struct PlaceholderTextEditor: NSViewRepresentable {
         }
 
         func focusChanged(_ focused: Bool) {
+            appliedFocus = focused
             guard let binding = parent.isFocused, binding.wrappedValue != focused else { return }
             DispatchQueue.main.async { binding.wrappedValue = focused }
         }

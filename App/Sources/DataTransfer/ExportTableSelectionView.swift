@@ -55,7 +55,7 @@ struct ExportTableSelectionView: View {
                 Text("Name").tag(false)
                 Text("Size").tag(true)
             }
-            .pickerStyle(.segmented).labelsHidden().frame(width: 110)
+            .pickerStyle(.segmented).labelsHidden().frame(width: 110, alignment: .leading)
         }
     }
 

@@ -156,6 +156,7 @@ private struct AISettings: View {
     @State private var models: [AIModelInfo] = []
     @State private var modelCheck = Check.idle
     @State private var keyCheck = Check.idle
+    @State private var showsModelPicker = false
 
     private var provider: AIProviderID? { model.settings.ai.provider }
 
@@ -193,19 +194,14 @@ private struct AISettings: View {
                             prompt: Text(provider?.suggestedModel ?? "Choose a provider first"))
                             .labelsHidden()
                             .disabled(provider == nil)
-                        Menu {
-                            if models.isEmpty {
-                                Text("Press Refresh to load the list")
-                            } else {
-                                ForEach(models) { m in
-                                    Button(m.displayName) { model.updateSettings { $0.ai.model = m.id } }
+                        Button("Choose…") { showsModelPicker = true }
+                            .disabled(provider == nil)
+                            .popover(isPresented: $showsModelPicker, arrowEdge: .bottom) {
+                                AIModelPicker(models: models, selected: model.settings.ai.model) { id in
+                                    model.updateSettings { $0.ai.model = id }
+                                    showsModelPicker = false
                                 }
                             }
-                        } label: {
-                            Text("Choose")
-                        }
-                        .menuStyle(.borderlessButton).fixedSize()
-                        .disabled(provider == nil)
                         Button { Task { await refreshModels() } } label: { Image(systemName: "arrow.clockwise") }
                             .help("Ask \(provider?.displayName ?? "the provider") which models this key can use")
                             .accessibilityLabel("Refresh models")
@@ -275,6 +271,75 @@ private struct AISettings: View {
         } catch {
             keyCheck = .failed(AIHTTPDescription.text(error))
         }
+    }
+}
+
+/// Searchable model list (OpenRouter returns hundreds). Matches every typed word against the model id and name;
+/// ids shaped `vendor/model` can also be narrowed to one vendor.
+private struct AIModelPicker: View {
+    let models: [AIModelInfo]
+    let selected: String?
+    let onPick: (String) -> Void
+    @State private var query = ""
+    @State private var vendor: String?
+
+    private static func vendor(of id: String) -> String? {
+        guard let slash = id.firstIndex(of: "/") else { return nil }
+        return String(id[..<slash])
+    }
+
+    private var vendors: [String] { Array(Set(models.compactMap { Self.vendor(of: $0.id) })).sorted() }
+
+    private var filtered: [AIModelInfo] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace)
+        return models.filter { m in
+            if let vendor, Self.vendor(of: m.id) != vendor { return false }
+            let haystack = (m.id + " " + m.displayName).lowercased()
+            return words.allSatisfy { haystack.contains($0) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if models.isEmpty {
+                Text("Press Refresh to load the list").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            } else {
+                HStack(spacing: 6) {
+                    TextField("Filter by name or provider", text: $query)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { if let first = filtered.first { onPick(first.id) } }
+                    if !vendors.isEmpty {
+                        Picker("Provider", selection: $vendor) {
+                            Text("All providers").tag(String?.none)
+                            Divider()
+                            ForEach(vendors, id: \.self) { Text($0).tag(String?.some($0)) }
+                        }
+                        .labelsHidden().fixedSize()
+                    }
+                }
+                List(filtered) { m in
+                    Button { onPick(m.id) } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(m.displayName).font(.system(size: 12))
+                                if m.displayName != m.id {
+                                    Text(m.id).font(.system(size: 10, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                                }
+                            }
+                            Spacer(minLength: 4)
+                            if m.id == selected { Image(systemName: "checkmark").foregroundStyle(Theme.accent) }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .listStyle(.plain)
+                .overlay { if filtered.isEmpty { Text("No matching models").font(.system(size: 12)).foregroundStyle(Theme.textSecondary) } }
+                Text("\(filtered.count) of \(models.count) models").font(.caption).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .padding(12)
+        .frame(width: 380, height: models.isEmpty ? nil : 420)
     }
 }
 

@@ -113,25 +113,53 @@ public struct AssistantContext: Sendable {
                                 allowSampleRows: allowSampleRows, sampleRows: sampleRows)
     }
 
-    /// Loads structures through an inspector for the assistant: all tables of `schema` up to `maxTables`
+    /// Loads structures through an inspector for the assistant: the `maxTables` tables most related to the prompt
     /// (the rest become name-only entries), then calls ``make(engine:serverVersion:currentSchema:structures:otherTables:prompt:allowSampleRows:sampleRows:maxSchemaChars:)``.
+    /// `maxTables` defaults to about what fits in ``SchemaSummary/defaultCap``; detail past that is cut anyway.
+    /// Pass a `cache` to reuse table lists and structures across requests.
     public static func load(
         from inspector: any SchemaInspector, engine: DatabaseEngine, serverVersion: String?, schema: String,
-        prompt: String, maxTables: Int = 150, allowSampleRows: Bool = false, sampleRows: [TableRef: SampleRows]? = nil
+        prompt: String, maxTables: Int = 40, allowSampleRows: Bool = false, sampleRows: [TableRef: SampleRows]? = nil,
+        cache: AssistantSchemaCache? = nil
     ) async throws -> AssistantContext {
-        let tables = try await inspector.listTables(schema: schema)
+        let tables = if let cache { try await cache.tables(schema: schema, using: inspector) } else { try await inspector.listTables(schema: schema) }
         // Detailed structures for the tables most related to the prompt first.
         let ranked = SchemaSummary.rankNames(tables.map(\.ref.name), focus: prompt)
         let order = Dictionary(uniqueKeysWithValues: ranked.enumerated().map { ($0.element, $0.offset) })
         let sorted = tables.sorted { (order[$0.ref.name] ?? .max) < (order[$1.ref.name] ?? .max) }
         var structures: [TableStructure] = []
         for t in sorted.prefix(maxTables) {
-            if let s = try? await inspector.structure(of: t.ref) { structures.append(s) }
+            try Task.checkCancellation()
+            let s = if let cache { try? await cache.structure(of: t.ref, using: inspector) } else { try? await inspector.structure(of: t.ref) }
+            if let s { structures.append(s) }
         }
         let loaded = Set(structures.map(\.info.ref))
         let rest = tables.filter { !loaded.contains($0.ref) }
         return make(engine: engine, serverVersion: serverVersion, currentSchema: schema, structures: structures,
                     otherTables: rest, prompt: prompt, allowSampleRows: allowSampleRows, sampleRows: sampleRows)
+    }
+}
+
+/// Table lists and structures the assistant already read, so follow-up questions skip the catalog round trips.
+/// Owners drop it whenever their schema catalog is invalidated (⌘R, reconnect).
+public actor AssistantSchemaCache {
+    private var tableLists: [String: [TableInfo]] = [:]
+    private var structures: [TableRef: TableStructure] = [:]
+
+    public init() {}
+
+    public func tables(schema: String, using inspector: any SchemaInspector) async throws -> [TableInfo] {
+        if let cached = tableLists[schema] { return cached }
+        let list = try await inspector.listTables(schema: schema)
+        tableLists[schema] = list
+        return list
+    }
+
+    public func structure(of ref: TableRef, using inspector: any SchemaInspector) async throws -> TableStructure {
+        if let cached = structures[ref] { return cached }
+        let s = try await inspector.structure(of: ref)
+        structures[ref] = s
+        return s
     }
 }
 
